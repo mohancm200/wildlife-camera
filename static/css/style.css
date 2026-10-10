@@ -757,3 +757,39 @@ footer {
         animation-duration: 0.01ms !important;
     }
 }
+
+/* Camera management action buttons */
+
+.camera-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 18px;
+}
+
+.camera-action-btn {
+    padding: 8px 14px;
+    border: 1px solid #47654e;
+    border-radius: 8px;
+    background: #1b3524;
+    color: #dff3e2;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.camera-action-btn:hover {
+    transform: translateY(-1px);
+    background: #294b32;
+}
+
+.delete-camera-btn {
+    border-color: rgba(255, 146, 146, 0.35);
+    background: rgba(130, 44, 44, 0.2);
+    color: #ffaaaa;
+}
+
+.delete-camera-btn:hover {
+    background: rgba(160, 48, 48, 0.35);
+}
