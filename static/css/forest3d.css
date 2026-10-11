@@ -1,0 +1,58 @@
+
+/* WildSense: live 3D rainforest background */
+
+#forest3d-background {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+    background:
+        radial-gradient(ellipse at 70% 30%, #244e32 0%, transparent 48%),
+        linear-gradient(180deg, #0b2115, #06100b 85%);
+}
+
+#forest3d-background canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+body > .sidebar,
+body > .main-content {
+    position: relative;
+    z-index: 1;
+}
+
+body > .sidebar {
+    background: rgba(7, 21, 13, 0.88);
+    backdrop-filter: blur(12px);
+}
+
+body > .main-content {
+    background: transparent;
+}
+
+.hero {
+    background-color: rgba(7, 25, 14, 0.45);
+    background-image:
+        linear-gradient(
+            90deg,
+            rgba(5, 19, 10, 0.86),
+            rgba(7, 26, 14, 0.55),
+            rgba(7, 26, 14, 0.20)
+        ) !important;
+    backdrop-filter: blur(2px);
+}
+
+.metric,
+.panel {
+    background: rgba(13, 34, 22, 0.88);
+    backdrop-filter: blur(10px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #forest3d-background {
+        opacity: 0.7;
+    }
+}
