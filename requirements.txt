@@ -1,0 +1,9 @@
+
+Flask
+python-dotenv
+mysql-connector-python
+opencv-python
+Pillow
+numpy
+pandas
+pytest
