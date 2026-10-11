@@ -7,3 +7,8 @@ Pillow
 numpy
 pandas
 pytest
+torch
+torchvision
+PytorchWildlife
+soundfile
+librosa
