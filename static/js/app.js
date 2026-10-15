@@ -26,13 +26,16 @@ document.addEventListener("DOMContentLoaded", () => {
     const el = (tag, cls = "", text = "") => {
         const node = document.createElement(tag);
         if (cls) node.className = cls;
-        if (text !== undefined && text !== null) node.textContent = String(text);
+        if (text !== undefined && text !== null) {
+            node.textContent = String(text);
+        }
         return node;
     };
 
     async function api(url, options = {}) {
         const response = await fetch(url, options);
         let data = {};
+
         try {
             data = await response.json();
         } catch (_) {}
@@ -40,6 +43,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!response.ok) {
             throw new Error(data.error || `Request failed (${response.status})`);
         }
+
         return data;
     }
 
@@ -99,9 +103,7 @@ document.addEventListener("DOMContentLoaded", () => {
         let [x1, y1, x2, y2] = box.map(Number);
         if (![x1, y1, x2, y2].every(Number.isFinite)) return null;
 
-        if (
-            Math.max(Math.abs(x1), Math.abs(y1), Math.abs(x2), Math.abs(y2)) <= 1.5
-        ) {
+        if (Math.max(Math.abs(x1), Math.abs(y1), Math.abs(x2), Math.abs(y2)) <= 1.5) {
             x1 *= imageWidth;
             x2 *= imageWidth;
             y1 *= imageHeight;
@@ -177,13 +179,7 @@ document.addEventListener("DOMContentLoaded", () => {
     function drawLiveBoxes() {
         if (!video?.videoWidth || !video?.videoHeight || !overlay) return;
         prepareOverlay();
-
-        drawBoxes(
-            overlay,
-            liveDetections,
-            video.videoWidth,
-            video.videoHeight
-        );
+        drawBoxes(overlay, liveDetections, video.videoWidth, video.videoHeight);
     }
 
     // --------------------------------------------------
@@ -217,11 +213,7 @@ document.addEventListener("DOMContentLoaded", () => {
             cameraSelect.replaceChildren();
 
             videoDevices.forEach((device, index) => {
-                const option = el(
-                    "option",
-                    "",
-                    device.label || `Camera ${index + 1}`
-                );
+                const option = el("option", "", device.label || `Camera ${index + 1}`);
                 option.value = device.deviceId;
                 cameraSelect.appendChild(option);
             });
@@ -321,7 +313,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
     async function runLiveDetection() {
         if (!stream || !video?.videoWidth || detectionBusy) return;
-
         detectionBusy = true;
 
         try {
@@ -352,10 +343,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 : [];
 
             drawLiveBoxes();
-
-            message(
-                `Live detection active — ${wildlife.count ?? liveDetections.length} object(s) detected.`
-            );
+            message(`Live detection active — ${wildlife.count ?? liveDetections.length} object(s) detected.`);
         } catch (error) {
             console.error("Live detection failed:", error);
             message(`Live detection error: ${error.message}`, true);
@@ -398,7 +386,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // --------------------------------------------------
-    // IMAGE QUALITY
+    // IMAGE QUALITY — SCORES OUT OF 100
     // --------------------------------------------------
 
     function calculateQuality(image) {
@@ -432,6 +420,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const brightness = total / gray.length;
         let variance = 0;
         let edgeEnergy = 0;
+        let pixelCount = 0;
 
         for (let y = 1; y < height - 1; y++) {
             for (let x = 1; x < width - 1; x++) {
@@ -440,27 +429,56 @@ document.addEventListener("DOMContentLoaded", () => {
                 variance += difference * difference;
 
                 const laplacian =
-                    gray[i - width] + gray[i + width] +
-                    gray[i - 1] + gray[i + 1] -
+                    gray[i - width] +
+                    gray[i + width] +
+                    gray[i - 1] +
+                    gray[i + 1] -
                     4 * gray[i];
 
                 edgeEnergy += laplacian * laplacian;
+                pixelCount++;
             }
         }
 
+        const contrast = Math.sqrt(variance / gray.length);
+        const blur = edgeEnergy / Math.max(1, pixelCount);
+
+        // Provisional brightness score: best near the middle of 0–255.
+        const brightnessScore = Math.max(
+            0,
+            100 - (Math.abs(brightness - 127.5) / 127.5) * 100
+        );
+
+        // Assumes contrast is grayscale standard deviation.
+        const contrastScore = Math.min(
+            100,
+            Math.max(0, (contrast / 64) * 100)
+        );
+
+        // Laplacian variance is a sharpness indicator.
+        const sharpnessScore = Math.min(
+            100,
+            Math.max(0, 100 * Math.log1p(blur) / Math.log1p(1000))
+        );
+
+        const overallScore =
+            brightnessScore * 0.30 +
+            contrastScore * 0.30 +
+            sharpnessScore * 0.40;
+
         return {
             brightness: Math.round(brightness * 10) / 10,
-            contrast: Math.round(Math.sqrt(variance / gray.length) * 10) / 10,
-            blur: Math.round(
-                edgeEnergy / Math.max(1, (width - 2) * (height - 2)) * 10
-            ) / 10
+            contrast: Math.round(contrast * 10) / 10,
+            blur: Math.round(blur * 10) / 10,
+            brightnessScore: Math.round(brightnessScore),
+            contrastScore: Math.round(contrastScore),
+            sharpnessScore: Math.round(sharpnessScore),
+            overallScore: Math.round(overallScore)
         };
     }
 
     // --------------------------------------------------
-    // ANALYZE ANY IMAGE
-    // Both uploaded and captured images get Keep/Discard.
-    // Nothing is saved to MySQL until Keep Image is clicked.
+    // ANALYZE IMAGE
     // --------------------------------------------------
 
     async function previewAndAnalyze(file) {
@@ -518,7 +536,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const formData = new FormData();
             formData.append("image", file, file.name);
 
-            // This endpoint detects objects without saving the image analysis.
+            // Detection-only endpoint: the image is not saved until Keep Image.
             const result = await api("/api/detect", {
                 method: "POST",
                 body: formData
@@ -542,6 +560,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 el("p", "", `Contrast: ${quality.contrast}`),
                 el("p", "", `Blur measure: ${quality.blur}`),
                 el("hr"),
+                el("h3", "", "Quality Scores (out of 100)"),
+                el("p", "", `Brightness Score: ${quality.brightnessScore} / 100`),
+                el("p", "", `Contrast Score: ${quality.contrastScore} / 100`),
+                el("p", "", `Sharpness Score: ${quality.sharpnessScore} / 100`),
+                el("p", "", `Overall Image Quality: ${quality.overallScore} / 100`),
+                el("hr"),
                 el("h3", "", "Wildlife Detection Results"),
                 el("p", "", `Objects detected: ${wildlife.count ?? detections.length}`),
                 el(
@@ -558,7 +582,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 )
             );
 
-            // Always show Keep/Discard after analysis, for uploaded and captured images.
+            // Keep Image saves through the existing Flask endpoint.
             const actions = el("div", "review-actions");
             const keepButton = el("button", "keep-btn", "Keep Image");
             const discardButton = el("button", "discard-btn", "Discard Image");
@@ -580,7 +604,6 @@ document.addEventListener("DOMContentLoaded", () => {
                     const cameraId = $("analysis-camera")?.value;
                     if (cameraId) saveData.append("camera_id", cameraId);
 
-                    // This is the only database-saving request in this workflow.
                     const saved = await api("/api/analyze", {
                         method: "POST",
                         body: saveData
@@ -602,7 +625,6 @@ document.addEventListener("DOMContentLoaded", () => {
                     anotherButton.type = "button";
 
                     closeButton.addEventListener("click", clearPreview);
-
                     anotherButton.addEventListener("click", () => {
                         clearPreview();
                         imageUpload?.click();
@@ -614,9 +636,11 @@ document.addEventListener("DOMContentLoaded", () => {
                     keepButton.disabled = false;
                     discardButton.disabled = false;
                     keepButton.textContent = "Keep Image";
+
                     results.appendChild(
                         el("p", "error-message", `Could not save image: ${error.message}`)
                     );
+
                     message(error.message, true);
                 }
             });
@@ -629,7 +653,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
             actions.append(keepButton, discardButton);
             previewArea.appendChild(actions);
-
             message("Analysis complete. Choose Keep Image or Discard Image.");
         } catch (error) {
             console.error("Image analysis failed:", error);
@@ -806,33 +829,25 @@ document.addEventListener("DOMContentLoaded", () => {
             cameras = data;
 
             if ($("camera-count")) $("camera-count").textContent = cameras.length;
-
             if ($("online-count")) {
-                $("online-count").textContent =
-                    cameras.filter(c => c.status === "Online").length;
+                $("online-count").textContent = cameras.filter(c => c.status === "Online").length;
             }
-
             if ($("warning-count")) {
-                $("warning-count").textContent =
-                    cameras.filter(c => c.status === "Warning").length;
+                $("warning-count").textContent = cameras.filter(c => c.status === "Warning").length;
             }
-
             if ($("offline-count")) {
-                $("offline-count").textContent =
-                    cameras.filter(c => c.status === "Offline").length;
+                $("offline-count").textContent = cameras.filter(c => c.status === "Offline").length;
             }
 
             renderCameras();
             populateCameraSelector();
 
             if ($("network-summary-text")) {
-                $("network-summary-text").textContent =
-                    `${cameras.length} registered camera(s)`;
+                $("network-summary-text").textContent = `${cameras.length} registered camera(s)`;
             }
 
             if ($("last-refreshed")) {
-                $("last-refreshed").textContent =
-                    `Last refreshed: ${new Date().toLocaleTimeString()}`;
+                $("last-refreshed").textContent = `Last refreshed: ${new Date().toLocaleTimeString()}`;
             }
         } catch (error) {
             console.error(error);
@@ -848,12 +863,7 @@ document.addEventListener("DOMContentLoaded", () => {
         let select = $("analysis-camera");
 
         if (!select) {
-            const label = el(
-                "label",
-                "",
-                "Associate with a registered camera (optional):"
-            );
-
+            const label = el("label", "", "Associate with a registered camera (optional):");
             label.style.display = "block";
             label.style.margin = "12px 0 6px";
 
@@ -1014,7 +1024,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 link.rel = "noopener";
                 cell.appendChild(link);
                 tr.appendChild(cell);
-
                 tbody.appendChild(tr);
             });
 
