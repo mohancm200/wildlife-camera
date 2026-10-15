@@ -1,18 +1,12 @@
 import json
 import os
 import threading
+from datetime import datetime
 
 import cv2
 import numpy as np
 import torch
-
-from flask import (
-    Flask,
-    Response,
-    jsonify,
-    render_template,
-    request,
-)
+from flask import Flask, Response, jsonify, render_template, request
 from mysql.connector import Error, IntegrityError
 from PytorchWildlife.models import detection
 
@@ -23,12 +17,15 @@ from database.db import (
     get_connection,
 )
 
-
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
 
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png"}
 ALLOWED_STATUSES = {"Online", "Warning", "Offline"}
+ALLOWED_POWER_SOURCES = {
+    "unknown", "electricity", "battery", "solar", "other"
+}
+ALLOWED_YES_NO_UNKNOWN = {"yes", "no", "unknown"}
 
 _wildlife_model = None
 _model_lock = threading.Lock()
@@ -45,22 +42,15 @@ def get_wildlife_model():
         with _model_lock:
             if _wildlife_model is None:
                 device = "cuda" if torch.cuda.is_available() else "cpu"
-
-                app.logger.info(
-                    "Loading MegaDetector on %s...", device
-                )
-
-                _wildlife_model = detection.MegaDetectorV5(
-                    device=device
-                )
-
+                app.logger.info("Loading MegaDetector on %s...", device)
+                _wildlife_model = detection.MegaDetectorV5(device=device)
                 app.logger.info("MegaDetector loaded successfully.")
 
     return _wildlife_model
 
 
 # --------------------------------------------------
-# IMAGE PROCESSING
+# IMAGE QUALITY AND LENS ESTIMATION
 # --------------------------------------------------
 
 def decode_image(image_bytes):
@@ -88,7 +78,6 @@ def calculate_image_quality(image_bytes):
         0.0,
         100.0 - abs(brightness_score - 128.0) * 1.35,
     )
-
     contrast_quality = min(100.0, contrast_score * 2.2)
     blur_quality = min(100.0, blur_score * 1.8)
 
@@ -113,6 +102,38 @@ def calculate_image_quality(image_bytes):
         "decision": decision,
     }
 
+
+def estimate_lens_status(metrics):
+    """
+    Estimate image clarity from image-quality measurements.
+    This cannot confirm physical lens damage, dirt, or moisture.
+    """
+    blur = metrics["blur_score"]
+    brightness = metrics["brightness_score"]
+    contrast = metrics["contrast_score"]
+
+    if (
+        blur < 15
+        or contrast < 12
+        or brightness < 20
+        or brightness > 235
+    ):
+        return "Inspection recommended"
+
+    if (
+        blur < 50
+        or contrast < 22
+        or brightness < 35
+        or brightness > 220
+    ):
+        return "Possible issue"
+
+    return "No obvious issue"
+
+
+# --------------------------------------------------
+# WILDLIFE DETECTION
+# --------------------------------------------------
 
 def detect_wildlife(image_bytes):
     image_bgr = decode_image(image_bytes)
@@ -149,20 +170,15 @@ def detect_wildlife(image_bytes):
                 "class_id": class_id,
                 "label": class_names.get(class_id, "unknown"),
                 "confidence": round(float(confidence), 4),
-                "box": [
-                    round(float(value), 2)
-                    for value in box
-                ],
+                "box": [round(float(value), 2) for value in box],
             })
-
-    animal_count = sum(
-        item["label"] == "animal"
-        for item in detections_list
-    )
 
     return {
         "count": len(detections_list),
-        "animal_count": animal_count,
+        "animal_count": sum(
+            item["label"] == "animal"
+            for item in detections_list
+        ),
         "detections": detections_list,
         "image_width": int(image_bgr.shape[1]),
         "image_height": int(image_bgr.shape[0]),
@@ -170,7 +186,7 @@ def detect_wildlife(image_bytes):
 
 
 # --------------------------------------------------
-# UPLOAD VALIDATION
+# VALIDATION HELPERS
 # --------------------------------------------------
 
 def validate_uploaded_image():
@@ -206,6 +222,40 @@ def validate_uploaded_image():
     return (uploaded, image_bytes), None
 
 
+def parse_optional_percent(value):
+    if value is None or value == "":
+        return None
+
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("battery_percent must be a number.")
+
+    if not 0 <= value <= 100:
+        raise ValueError(
+            "battery_percent must be between 0 and 100."
+        )
+
+    return value
+
+
+def parse_optional_voltage(value):
+    if value is None or value == "":
+        return None
+
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("battery_voltage must be a number.")
+
+    if not 0 < value <= 100:
+        raise ValueError(
+            "battery_voltage must be greater than 0 and at most 100."
+        )
+
+    return value
+
+
 # --------------------------------------------------
 # HOME
 # --------------------------------------------------
@@ -216,7 +266,7 @@ def home():
 
 
 # --------------------------------------------------
-# CAMERA MANAGEMENT
+# GET CAMERAS
 # --------------------------------------------------
 
 @app.route("/api/cameras", methods=["GET"])
@@ -231,6 +281,10 @@ def get_cameras():
         }), 503
 
 
+# --------------------------------------------------
+# ADD CAMERA WITH POWER CONFIGURATION
+# --------------------------------------------------
+
 @app.route("/api/cameras", methods=["POST"])
 def add_camera():
     data = request.get_json(silent=True) or {}
@@ -238,6 +292,24 @@ def add_camera():
     camera_id = str(data.get("id", "")).strip().upper()
     zone = str(data.get("zone", "")).strip()
     status = str(data.get("status", "Online")).strip()
+
+    power_source = str(
+        data.get("power_source", "unknown")
+    ).strip().lower()
+
+    backup_battery = str(
+        data.get("backup_battery", "unknown")
+    ).strip().lower()
+
+    battery_monitoring = str(
+        data.get("battery_monitoring", "unknown")
+    ).strip().lower()
+
+    try:
+        battery_percent = parse_optional_percent(data.get("battery_percent"))
+        battery_voltage = parse_optional_voltage(data.get("battery_voltage"))
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
 
     if not camera_id or not zone:
         return jsonify({
@@ -255,6 +327,22 @@ def add_camera():
     if status not in ALLOWED_STATUSES:
         return jsonify({"error": "Invalid camera status."}), 400
 
+    if power_source not in ALLOWED_POWER_SOURCES:
+        return jsonify({"error": "Invalid power_source."}), 400
+
+    if backup_battery not in ALLOWED_YES_NO_UNKNOWN:
+        return jsonify({
+            "error": "backup_battery must be yes, no, or unknown."
+        }), 400
+
+    if battery_monitoring not in {"yes", "no", "unknown", "available", "unavailable"}:
+        return jsonify({
+            "error": (
+                "battery_monitoring must be yes, no, unknown, "
+                "available, or unavailable."
+            )
+        }), 400
+
     connection = None
     cursor = None
 
@@ -263,9 +351,24 @@ def add_camera():
         cursor = connection.cursor()
 
         cursor.execute(
-            "INSERT INTO cameras (id, zone, status) "
-            "VALUES (%s, %s, %s)",
-            (camera_id, zone, status),
+            """
+            INSERT INTO cameras (
+                id, zone, status, power_source,
+                backup_battery, battery_monitoring,
+                battery_percent, battery_voltage
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                camera_id,
+                zone,
+                status,
+                power_source,
+                backup_battery,
+                battery_monitoring,
+                battery_percent,
+                battery_voltage,
+            ),
         )
 
         connection.commit()
@@ -276,6 +379,17 @@ def add_camera():
                 "id": camera_id,
                 "zone": zone,
                 "status": status,
+                "power_source": power_source,
+                "backup_battery": backup_battery,
+                "battery_monitoring": battery_monitoring,
+                "battery_percent": battery_percent,
+                "battery_voltage": battery_voltage,
+                "battery_health": (
+                    "Unknown" if battery_percent is None
+                    else "Critical" if battery_percent < 20
+                    else "Warning" if battery_percent < 60
+                    else "Good"
+                ),
             },
         }), 201
 
@@ -301,6 +415,10 @@ def add_camera():
         if connection and connection.is_connected():
             connection.close()
 
+
+# --------------------------------------------------
+# UPDATE CAMERA
+# --------------------------------------------------
 
 @app.route("/api/cameras/<camera_id>", methods=["PUT"])
 def update_camera(camera_id):
@@ -330,7 +448,11 @@ def update_camera(camera_id):
         cursor = connection.cursor()
 
         cursor.execute(
-            "UPDATE cameras SET zone = %s, status = %s WHERE id = %s",
+            """
+            UPDATE cameras
+            SET zone = %s, status = %s
+            WHERE id = %s
+            """,
             (zone, status, camera_id),
         )
 
@@ -374,6 +496,10 @@ def update_camera(camera_id):
             connection.close()
 
 
+# --------------------------------------------------
+# DELETE CAMERA
+# --------------------------------------------------
+
 @app.route("/api/cameras/<camera_id>", methods=["DELETE"])
 def delete_camera(camera_id):
     connection = None
@@ -392,9 +518,7 @@ def delete_camera(camera_id):
         connection.commit()
 
         if deleted == 0:
-            return jsonify({
-                "error": "Camera not found."
-            }), 404
+            return jsonify({"error": "Camera not found."}), 404
 
         return jsonify({
             "message": "Camera deleted successfully."
@@ -418,8 +542,244 @@ def delete_camera(camera_id):
 
 
 # --------------------------------------------------
-# LIVE WILDLIFE DETECTION
-# This endpoint does not save the frame.
+# CAMERA HEARTBEAT AND BATTERY TELEMETRY
+# --------------------------------------------------
+
+@app.route(
+    "/api/cameras/<camera_id>/heartbeat",
+    methods=["POST"],
+)
+def camera_heartbeat(camera_id):
+    """
+    A camera or device should POST here when it checks in.
+    This endpoint does not itself connect to physical camera hardware.
+    """
+    data = request.get_json(silent=True) or {}
+
+    try:
+        battery_percent = parse_optional_percent(
+            data.get("battery_percent")
+        )
+        battery_voltage = parse_optional_voltage(
+            data.get("battery_voltage")
+        )
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+    external = data.get("external_power_available")
+
+    if external not in (None, True, False, 0, 1):
+        return jsonify({
+            "error": (
+                "external_power_available must be true, false, or null."
+            )
+        }), 400
+
+    if external is not None:
+        external = int(bool(external))
+
+    connection = None
+    cursor = None
+
+    try:
+        connection = get_connection()
+        cursor = connection.cursor()
+
+        cursor.execute(
+            "SELECT id FROM cameras WHERE id = %s",
+            (camera_id,),
+        )
+
+        if not cursor.fetchone():
+            return jsonify({"error": "Camera not found."}), 404
+
+        cursor.execute(
+            """
+            UPDATE cameras
+            SET last_seen = CURRENT_TIMESTAMP,
+                status = 'Online',
+                battery_percent = COALESCE(%s, battery_percent),
+                battery_voltage = COALESCE(%s, battery_voltage),
+                external_power_available =
+                    COALESCE(%s, external_power_available),
+                last_telemetry_at = CASE
+                    WHEN %s IS NOT NULL
+                      OR %s IS NOT NULL
+                      OR %s IS NOT NULL
+                    THEN CURRENT_TIMESTAMP
+                    ELSE last_telemetry_at
+                END
+            WHERE id = %s
+            """,
+            (
+                battery_percent,
+                battery_voltage,
+                external,
+                battery_percent,
+                battery_voltage,
+                external,
+                camera_id,
+            ),
+        )
+
+        connection.commit()
+
+        if battery_percent is None:
+            battery_health = "Unknown"
+        elif battery_percent < 20:
+            battery_health = "Critical"
+        elif battery_percent < 60:
+            battery_health = "Warning"
+        else:
+            battery_health = "Good"
+
+        power_status = (
+            "Unavailable" if external == 0
+            else "Available" if external == 1
+            else "Unknown"
+        )
+
+        return jsonify({
+            "message": "Camera heartbeat recorded.",
+            "camera_id": camera_id,
+            "status": "Online",
+            "battery_health": battery_health,
+            "external_power_status": power_status,
+        })
+
+    except Error:
+        if connection and connection.is_connected():
+            connection.rollback()
+
+        app.logger.exception("Unable to record camera heartbeat")
+        return jsonify({
+            "error": "Unable to record camera heartbeat."
+        }), 503
+
+    finally:
+        if cursor:
+            cursor.close()
+
+        if connection and connection.is_connected():
+            connection.close()
+
+
+# --------------------------------------------------
+# CAMERA HEALTH SUMMARY
+# --------------------------------------------------
+
+@app.route("/api/cameras/health", methods=["GET"])
+def camera_health_summary():
+    connection = None
+    cursor = None
+
+    try:
+        connection = get_connection()
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute(
+            """
+            SELECT id, zone, status, last_seen, power_source,
+                   backup_battery, battery_monitoring,
+                   battery_percent, battery_voltage,
+                   external_power_available, last_telemetry_at
+            FROM cameras
+            ORDER BY id
+            """
+        )
+
+        rows = cursor.fetchall()
+        now = datetime.now()
+        result = []
+
+        for row in rows:
+            seen = row["last_seen"]
+
+            if seen:
+                if seen.tzinfo is not None:
+                    seen = seen.replace(tzinfo=None)
+
+                minutes_since_seen = max(
+                    0,
+                    int((now - seen).total_seconds() // 60),
+                )
+            else:
+                minutes_since_seen = None
+
+            if minutes_since_seen is None:
+                health_status = "Unknown"
+            elif minutes_since_seen <= 5:
+                health_status = "Online"
+            elif minutes_since_seen <= 15:
+                health_status = "Warning"
+            else:
+                health_status = "Offline"
+
+            percent = row["battery_percent"]
+
+            if percent is None:
+                battery_health = "Unknown"
+            elif float(percent) < 20:
+                battery_health = "Critical"
+            elif float(percent) < 60:
+                battery_health = "Warning"
+            else:
+                battery_health = "Good"
+
+            external = row["external_power_available"]
+
+            if external == 0:
+                power_status = "Unavailable"
+            elif external == 1:
+                power_status = "Available"
+            else:
+                power_status = "Unknown"
+
+            result.append({
+                "id": row["id"],
+                "zone": row["zone"],
+                "last_seen": (
+                    row["last_seen"].isoformat(sep=" ")
+                    if row["last_seen"] else None
+                ),
+                "minutes_since_seen": minutes_since_seen,
+                "health_status": health_status,
+                "power_source": row["power_source"],
+                "backup_battery": row["backup_battery"],
+                "battery_monitoring": row["battery_monitoring"],
+                "battery_percent": (
+                    float(percent) if percent is not None else None
+                ),
+                "battery_voltage": (
+                    float(row["battery_voltage"])
+                    if row["battery_voltage"] is not None else None
+                ),
+                "battery_health": battery_health,
+                "external_power_status": power_status,
+                "last_telemetry_at": (
+                    row["last_telemetry_at"].isoformat(sep=" ")
+                    if row["last_telemetry_at"] else None
+                ),
+            })
+
+        return jsonify(result)
+
+    except Error:
+        app.logger.exception("Unable to calculate camera health")
+        return jsonify({
+            "error": "Unable to calculate camera health."
+        }), 503
+
+    finally:
+        if cursor:
+            cursor.close()
+
+        if connection and connection.is_connected():
+            connection.close()
+
+
+# --------------------------------------------------
+# LIVE WILDLIFE DETECTION (NOT SAVED)
 # --------------------------------------------------
 
 @app.route("/api/detect", methods=["POST"])
@@ -446,15 +806,12 @@ def detect_live_frame():
     except Exception:
         app.logger.exception("Wildlife detection failed")
         return jsonify({
-            "error": (
-                "Wildlife detection failed. "
-                "Check the Flask terminal."
-            )
+            "error": "Wildlife detection failed. Check the Flask terminal."
         }), 500
 
 
 # --------------------------------------------------
-# SAVE IMAGE, QUALITY METRICS AND DETECTIONS
+# SAVE IMAGE, QUALITY, LENS ESTIMATE AND DETECTIONS
 # --------------------------------------------------
 
 @app.route("/api/analyze", methods=["POST"])
@@ -468,6 +825,7 @@ def analyze_image():
 
     try:
         metrics = calculate_image_quality(image_bytes)
+        lens_status = estimate_lens_status(metrics)
         wildlife_results = detect_wildlife(image_bytes)
 
     except ValueError as error:
@@ -478,10 +836,7 @@ def analyze_image():
             "Image quality analysis or wildlife detection failed"
         )
         return jsonify({
-            "error": (
-                "Image analysis failed. "
-                "Check the Flask terminal."
-            )
+            "error": "Image analysis failed. Check the Flask terminal."
         }), 500
 
     camera_id = request.form.get("camera_id", "").strip() or None
@@ -501,32 +856,26 @@ def analyze_image():
                     "SELECT id FROM cameras WHERE id = %s",
                     (camera_id,),
                 )
-                camera_exists = check_cursor.fetchone()
+
+                if not check_cursor.fetchone():
+                    return jsonify({
+                        "error": "Selected camera was not found."
+                    }), 404
+
             finally:
                 check_cursor.close()
-
-            if not camera_exists:
-                return jsonify({
-                    "error": "Selected camera was not found."
-                }), 404
 
         cursor = connection.cursor()
 
         cursor.execute(
             """
             INSERT INTO image_analyses (
-                camera_id,
-                image_name,
-                blur_score,
-                brightness_score,
-                contrast_score,
-                reliability_score,
-                decision,
-                health_status,
-                image_data,
-                detection_json
+                camera_id, image_name, blur_score,
+                brightness_score, contrast_score,
+                reliability_score, decision, health_status,
+                image_data, detection_json, lens_status
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 camera_id,
@@ -539,23 +888,42 @@ def analyze_image():
                 "Analyzed",
                 image_bytes,
                 json.dumps(wildlife_results),
+                lens_status,
             ),
         )
 
-        connection.commit()
-
         analysis_id = cursor.lastrowid
 
-        metrics["analysis_id"] = analysis_id
-        metrics["image_name"] = image_name
-        metrics["camera_id"] = camera_id
-        metrics["health_status"] = "Analyzed"
-        metrics["image_url"] = f"/api/images/{analysis_id}"
+        # An image upload counts as a check-in at that time only.
+        if camera_id:
+            cursor.execute(
+                """
+                UPDATE cameras
+                SET last_seen = CURRENT_TIMESTAMP
+                WHERE id = %s
+                """,
+                (camera_id,),
+            )
+
+        connection.commit()
+
+        metrics.update({
+            "analysis_id": analysis_id,
+            "image_name": image_name,
+            "camera_id": camera_id,
+            "health_status": "Analyzed",
+            "lens_status": lens_status,
+            "lens_status_note": (
+                "Image-based estimate only; cannot confirm "
+                "physical lens damage."
+            ),
+            "image_url": f"/api/images/{analysis_id}",
+        })
 
         return jsonify({
             "message": (
-                "Image, quality metrics, and wildlife detections "
-                "saved successfully to MySQL."
+                "Image, quality metrics, lens estimate, and "
+                "wildlife detections saved successfully to MySQL."
             ),
             "analysis": metrics,
             "wildlife_detection": wildlife_results,
@@ -585,8 +953,7 @@ def analyze_image():
 
 
 # --------------------------------------------------
-# OPEN A SAVED IMAGE IN THE BROWSER
-# Example: http://127.0.0.1:5000/api/images/17
+# OPEN A SAVED IMAGE
 # --------------------------------------------------
 
 @app.route("/api/images/<int:analysis_id>", methods=["GET"])
@@ -670,10 +1037,12 @@ def get_analyses():
 
 # --------------------------------------------------
 # VIEW SAVED WILDLIFE DETECTION DATA
-# Example: http://127.0.0.1:5000/api/analyses/17/detection
 # --------------------------------------------------
 
-@app.route("/api/analyses/<int:analysis_id>/detection", methods=["GET"])
+@app.route(
+    "/api/analyses/<int:analysis_id>/detection",
+    methods=["GET"],
+)
 def get_saved_detection(analysis_id):
     connection = None
     cursor = None
@@ -694,9 +1063,7 @@ def get_saved_detection(analysis_id):
         row = cursor.fetchone()
 
         if not row:
-            return jsonify({
-                "error": "Analysis not found."
-            }), 404
+            return jsonify({"error": "Analysis not found."}), 404
 
         detection_json = row[0]
 
@@ -728,7 +1095,7 @@ def get_saved_detection(analysis_id):
 
 
 # --------------------------------------------------
-# HEALTH CHECK
+# DATABASE HEALTH CHECK
 # --------------------------------------------------
 
 @app.route("/health")
