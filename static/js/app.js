@@ -1066,8 +1066,222 @@ document.addEventListener("DOMContentLoaded", () => {
         if (previewUrl) URL.revokeObjectURL(previewUrl);
     });
 
+    
+    // --------------------------------------------------
+    // CAMERA HEALTH
+    // --------------------------------------------------
+
+    let healthCameras = [];
+
+    async function loadCameraHealth() {
+        const list = $("camera-health-list");
+        const message = $("camera-health-message");
+
+        if (!list) {
+            console.error("Camera Health section is missing from index.html.");
+            return;
+        }
+
+        if (message) message.textContent = "Loading camera health...";
+        list.textContent = "Loading camera health...";
+
+        try {
+            const data = await api("/api/cameras/health");
+
+            if (!Array.isArray(data)) {
+                throw new Error("Unexpected camera health response.");
+            }
+
+            healthCameras = data;
+
+            const counts = {
+                Online: 0,
+                Warning: 0,
+                Offline: 0,
+                Unknown: 0
+            };
+
+            healthCameras.forEach(camera => {
+                const status = camera.health_status || "Unknown";
+
+                if (Object.prototype.hasOwnProperty.call(counts, status)) {
+                    counts[status]++;
+                } else {
+                    counts.Unknown++;
+                }
+            });
+
+            if ($("health-online-count")) {
+                $("health-online-count").textContent = counts.Online;
+            }
+
+            if ($("health-warning-count")) {
+                $("health-warning-count").textContent = counts.Warning;
+            }
+
+            if ($("health-offline-count")) {
+                $("health-offline-count").textContent = counts.Offline;
+            }
+
+            if ($("health-unknown-count")) {
+                $("health-unknown-count").textContent = counts.Unknown;
+            }
+
+            renderCameraHealth();
+
+            if (message) {
+                message.textContent =
+                    `Health information loaded for ${healthCameras.length} camera(s). ` +
+                    "Battery readings depend on reported device telemetry.";
+            }
+        } catch (error) {
+            console.error("Camera health loading failed:", error);
+            list.textContent = "Could not load camera health.";
+            if (message) {
+                message.textContent = error.message;
+            }
+        }
+    }
+
+    function renderCameraHealth() {
+        const list = $("camera-health-list");
+        if (!list) return;
+
+        list.replaceChildren();
+
+        const search = (
+            $("health-camera-search")?.value || ""
+        ).trim().toLowerCase();
+
+        const selectedStatus =
+            $("health-status-filter")?.value || "all";
+
+        const filtered = healthCameras.filter(camera => {
+            const id = String(camera.id || "").toLowerCase();
+            const zone = String(camera.zone || "").toLowerCase();
+            const status = camera.health_status || "Unknown";
+
+            const matchesSearch =
+                id.includes(search) || zone.includes(search);
+
+            const matchesStatus =
+                selectedStatus === "all" || status === selectedStatus;
+
+            return matchesSearch && matchesStatus;
+        });
+
+        if (!filtered.length) {
+            list.textContent = "No cameras match your search or health filter.";
+            return;
+        }
+
+        filtered.forEach(camera => {
+            const status = camera.health_status || "Unknown";
+            const card = el("article", "camera-card");
+            const top = el("div", "camera-card-top");
+
+            top.append(
+                el("h3", "", camera.id || "Unknown camera"),
+                el(
+                    "span",
+                    `camera-status ${status.toLowerCase()}`,
+                    status
+                )
+            );
+
+            card.append(
+                top,
+                el("p", "camera-zone", `Zone: ${camera.zone || "Unknown"}`),
+                el(
+                    "p",
+                    "",
+                    `Last seen: ${camera.last_seen || "Never reported"}`
+                ),
+                el(
+                    "p",
+                    "",
+                    `Minutes since check-in: ${
+                        camera.minutes_since_seen ?? "Unknown"
+                    }`
+                ),
+                el(
+                    "p",
+                    "",
+                    `Power source: ${camera.power_source || "Unknown"}`
+                ),
+                el(
+                    "p",
+                    "",
+                    `Backup battery: ${camera.backup_battery || "Unknown"}`
+                ),
+                el(
+                    "p",
+                    "",
+                    `Battery monitoring: ${camera.battery_monitoring || "Unknown"}`
+                ),
+                el(
+                    "p",
+                    "",
+                    `Battery level: ${
+                        camera.battery_percent == null
+                            ? "No reading"
+                            : `${camera.battery_percent}%`
+                    }`
+                ),
+                el(
+                    "p",
+                    "",
+                    `Battery voltage: ${
+                        camera.battery_voltage == null
+                            ? "No reading"
+                            : `${camera.battery_voltage} V`
+                    }`
+                ),
+                el(
+                    "p",
+                    "",
+                    `Battery health: ${camera.battery_health || "Unknown"}`
+                ),
+                el(
+                    "p",
+                    "",
+                    `External power: ${
+                        camera.external_power_status || "Unknown"
+                    }`
+                ),
+                el(
+                    "p",
+                    "",
+                    `Last telemetry: ${camera.last_telemetry_at || "Not received"}`
+                )
+            );
+
+            list.appendChild(card);
+        });
+    }
+
+    $("refresh-camera-health")?.addEventListener(
+        "click",
+        loadCameraHealth
+    );
+
+    $("health-camera-search")?.addEventListener(
+        "input",
+        renderCameraHealth
+    );
+
+    $("health-status-filter")?.addEventListener(
+        "change",
+        renderCameraHealth
+    );
+
+    // --------------------------------------------------
+    // INITIALIZE WILDSENSE
+    // --------------------------------------------------
+
     prepareOverlay();
     updateButtons();
     loadCameras();
-    loadAnalyses();
+    loadCameraHealth();
+    loadCameraHealth();
 });
