@@ -1,20 +1,21 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#07170e">
+    <meta name="theme-color" content="#091710">
     <title>WildSense | Wildlife Intelligence</title>
-
-    <link rel="stylesheet"
-          href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Sora:wght@500;600;700;800&display=swap">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
-
 <body>
-    <!-- Background controlled by page-scenes.js -->
+
+    <!-- LIVE 3D WILDLIFE BACKGROUND (drawn by page-scenes.js) -->
     <div id="forest3d-background" aria-hidden="true"></div>
 
+    <!-- SIDEBAR -->
     <aside class="sidebar">
         <a href="#overview" class="brand">
             <span class="brand-icon">🌿</span>
@@ -24,12 +25,13 @@
         <p class="muted sidebar-label">WILDLIFE INTELLIGENCE</p>
 
         <nav aria-label="Main navigation">
-            <a class="active" href="#overview">⌂ <span>Overview</span></a>
-            <a href="#cameras">▦ <span>Camera Network</span></a>
-            <a href="#connected-camera-devices">▣ <span>Connected Devices</span></a>
-            <a href="#analysis">◎ <span>AI Wildlife Detection &amp; Image Analysis</span></a>
-            <a href="#history">▤ <span>Analysis History</span></a>
-            <a href="#reports">▥ <span>Reports</span></a>
+            <a class="active" href="#overview">◈ Overview</a>
+            <a href="#cameras">▦ Camera Network</a>
+            <a href="#camera-health">♥ Camera Health</a>
+            <a href="#connected-camera-devices">📷 Connected Devices</a>
+            <a href="#analysis">◎ Image Analysis</a>
+            <a href="#history">▤ Analysis History</a>
+            <a href="#reports">↗ Reports</a>
         </nav>
 
         <div class="sidebar-bottom">
@@ -39,171 +41,117 @@
         </div>
     </aside>
 
+    <!-- MAIN CONTENT -->
     <main class="main-content">
+
+        <!-- OVERVIEW -->
         <header class="topbar" id="overview">
-            <div class="search-display">
-                <span>⌕</span>
-                <span>Wildlife intelligence monitoring</span>
+            <div>
+                <p class="eyebrow">CONSERVATION / OVERVIEW</p>
+                <h1>Wildlife Monitoring Center</h1>
+                <p class="muted">
+                    Monitor camera health and wildlife data reliability.
+                </p>
             </div>
 
-            <div class="topbar-status">
-                <span>🌤️ <strong>Forest Zone</strong></span>
-                <span class="system-status">
-                    <span class="status-dot"></span> SYSTEM ONLINE
-                </span>
-            </div>
+            <span class="system-status">
+                <span class="status-dot"></span> SYSTEM ONLINE
+            </span>
         </header>
 
-        <!-- HOME / OVERVIEW -->
-        <section class="home-hero">
+        <section class="hero">
             <div class="hero-content">
                 <p class="eyebrow">INTELLIGENT CONSERVATION</p>
-                <h1>See the Forest.<br><span>Protect Its Future.</span></h1>
+                <h2>Every image tells a story.<br>Make every image count.</h2>
                 <p>
-                    Monitor camera health, detect wildlife, and improve
-                    the reliability of conservation data.
+                    Explore wildlife imagery, monitor camera health,
+                    and evaluate the quality of your conservation data.
                 </p>
+                <a class="primary-btn hero-btn" href="#analysis">
+                    Analyze an image ↗
+                </a>
+            </div>
 
-                <div class="hero-actions">
-                    <a class="primary-btn" href="#cameras">Explore Cameras →</a>
-                    <a class="secondary-btn" href="#analysis">Analyze Wildlife →</a>
-                </div>
-
-                <div class="hero-tags">
-                    <span>● Local monitoring</span>
-                    <span>▣ Camera intelligence</span>
-                    <span>◉ Wildlife detection</span>
-                </div>
+            <div class="hero-decoration" aria-hidden="true">
+                <span class="hero-emoji">🌳</span>
+                <span class="hero-orbit orbit-one"></span>
+                <span class="hero-orbit orbit-two"></span>
             </div>
         </section>
 
         <!-- DASHBOARD METRICS -->
         <section class="metrics" aria-label="Network metrics">
             <article class="metric">
-                <span class="metric-icon">▣</span>
-                <div>
-                    <span class="metric-label">REGISTERED CAMERAS</span>
-                    <h2 id="camera-count">—</h2>
-                    <p>Stored in MySQL</p>
-                </div>
+                <span>REGISTERED CAMERAS</span>
+                <h2 id="camera-count">—</h2>
+                <p>Stored in MySQL</p>
             </article>
 
             <article class="metric">
-                <span class="metric-icon">◉</span>
-                <div>
-                    <span class="metric-label">CAMERAS ONLINE</span>
-                    <h2 id="online-count">—</h2>
-                    <p>Reported status</p>
-                </div>
+                <span>CAMERAS ONLINE</span>
+                <h2 id="online-count">—</h2>
+                <p>Reported status</p>
             </article>
 
             <article class="metric">
-                <span class="metric-icon warning-icon">⚠</span>
-                <div>
-                    <span class="metric-label">CAMERA WARNINGS</span>
-                    <h2 id="warning-count">—</h2>
-                    <p>Cameras needing attention</p>
-                </div>
+                <span>CAMERA WARNINGS</span>
+                <h2 id="warning-count">—</h2>
+                <p>Cameras needing attention</p>
             </article>
 
             <article class="metric">
-                <span class="metric-icon danger-icon">⏻</span>
-                <div>
-                    <span class="metric-label">CAMERAS OFFLINE</span>
-                    <h2 id="offline-count">—</h2>
-                    <p>Reported offline</p>
-                </div>
+                <span>CAMERAS OFFLINE</span>
+                <h2 id="offline-count">—</h2>
+                <p>Reported offline</p>
             </article>
 
             <article class="metric">
-                <span class="metric-icon">▥</span>
-                <div>
-                    <span class="metric-label">DATA RELIABILITY</span>
-                    <h2 id="reliability-count">—</h2>
-                    <p>Average recorded score</p>
-                </div>
+                <span>DATA RELIABILITY</span>
+                <h2 id="reliability-count">—</h2>
+                <p>Average recorded score</p>
             </article>
-        </section>
-
-        <!-- FEATURE CARDS -->
-        <section class="feature-grid" aria-label="WildSense features">
-            <a class="feature-card" href="#cameras">
-                <div class="feature-picture picture-cameras">📷</div>
-                <h3>Camera Network</h3>
-                <p>Register, manage, and monitor forest cameras.</p>
-                <span class="feature-link">Manage Cameras →</span>
-            </a>
-
-            <!-- SECOND FRONT-END IMAGE: REPLACED WITH YOUR WILDLIFE IMAGE -->
-            <a class="feature-card" href="#connected-camera-devices">
-                <div class="feature-picture picture-devices wildlife-feature-image">
-                    <img
-                        src="{{ url_for('static', filename='images/wildsense-wildlife.png') }}"
-                        alt="Wild animals gathered in a sunlit forest"
-                        loading="eager"
-                    >
-                </div>
-                <h3>Connected Devices</h3>
-                <p>Connect to a webcam, preview video, and capture photos.</p>
-                <span class="feature-link">Connect Devices →</span>
-            </a>
-
-            <a class="feature-card" href="#analysis">
-                <div class="feature-picture picture-detection">🐅</div>
-                <h3>AI Wildlife Detection</h3>
-                <p>Detect wildlife in images using computer vision.</p>
-                <span class="feature-link">Start Detection →</span>
-            </a>
-
-            <a class="feature-card" href="#analysis">
-                <div class="feature-picture picture-analysis">🌿</div>
-                <h3>Image Analysis</h3>
-                <p>Review image quality and wildlife detection results.</p>
-                <span class="feature-link">Analyze Image →</span>
-            </a>
-
-            <a class="feature-card" href="#history">
-                <div class="feature-picture picture-history">🗂️</div>
-                <h3>Analysis History</h3>
-                <p>Browse saved images and previous analysis results.</p>
-                <span class="feature-link">View History →</span>
-            </a>
-
-            <a class="feature-card" href="#reports">
-                <div class="feature-picture picture-reports">📊</div>
-                <h3>Reports</h3>
-                <p>Review camera status and data reliability information.</p>
-                <span class="feature-link">View Reports →</span>
-            </a>
         </section>
 
         <!-- CAMERA NETWORK -->
-        <section class="panel page-section" id="cameras">
+        <section class="panel" id="cameras">
             <div class="section-heading">
                 <div>
-                    <p class="eyebrow">FOREST SURVEILLANCE</p>
+                    <p class="eyebrow">NETWORK MANAGEMENT</p>
                     <h2>Camera Network</h2>
-                    <p class="muted">Manage and monitor your registered cameras.</p>
+                    <p class="muted">
+                        Register, search, edit, and delete your cameras.
+                        View detailed device health in Camera Health.
+                    </p>
                 </div>
+
                 <div class="camera-toolbar">
                     <button type="button" class="secondary-btn"
-                            id="refresh-cameras">↻ Refresh</button>
-                    <a href="#connected-camera-devices"
-                       class="primary-btn" id="show-add-camera">+ Add Camera</a>
+                            id="refresh-cameras">
+                        ↻ Refresh
+                    </button>
+
+                    <button type="button" class="primary-btn"
+                            id="show-add-camera">
+                        + Add Camera
+                    </button>
                 </div>
             </div>
 
             <div class="network-summary">
                 <span class="status-dot"></span>
                 <span id="network-summary-text">Loading network status...</span>
-                <span id="last-refreshed" class="muted">Last refreshed: not yet</span>
+                <span id="last-refreshed" class="muted">
+                    Last refreshed: not yet
+                </span>
             </div>
 
             <div class="camera-filters">
                 <input type="search" id="camera-search"
                        placeholder="Search camera ID or forest zone..."
                        aria-label="Search cameras">
-                <select id="camera-status-filter" aria-label="Filter camera status">
+
+                <select id="camera-status-filter"
+                        aria-label="Filter camera status">
                     <option value="all">All statuses</option>
                     <option value="Online">Online</option>
                     <option value="Warning">Warning</option>
@@ -211,80 +159,216 @@
                 </select>
             </div>
 
-            <p id="camera-results-count" class="muted">Loading cameras...</p>
-            <div id="camera-list" class="camera-grid">Loading camera records...</div>
+            <p id="camera-results-count" class="muted">
+                Loading cameras...
+            </p>
+
+            <div id="camera-list" class="camera-grid">
+                Loading camera records...
+            </div>
+
             <p id="camera-filter-empty" class="empty-state" hidden>
                 No cameras match your search or selected status.
             </p>
 
+            <!-- CAMERA REGISTRATION FORM -->
             <form id="add-camera-form" class="camera-form" hidden>
                 <div class="form-heading">
                     <div>
                         <p class="eyebrow">NETWORK MANAGEMENT</p>
                         <h3 id="camera-form-title">Register a Camera</h3>
+                        <p class="muted">
+                            Register a camera in your monitoring network.
+                        </p>
                     </div>
+
                     <button type="button" id="cancel-camera-form"
-                            class="secondary-btn">Cancel</button>
+                            class="secondary-btn">
+                        Cancel
+                    </button>
                 </div>
 
                 <div class="form-grid">
-                    <label>Camera ID
-                        <input id="camera-id" name="camera_id" type="text"
-                               maxlength="20" placeholder="e.g. CAM-006" required>
+                    <label>
+                        Camera ID
+                        <input id="camera-id" name="camera_id"
+                               type="text" maxlength="20"
+                               placeholder="e.g. CAM-006" required>
                     </label>
-                    <label>Forest Zone
-                        <input id="camera-zone" name="camera_zone" type="text"
-                               maxlength="100" placeholder="e.g. Western Forest" required>
+
+                    <label>
+                        Forest Zone
+                        <input id="camera-zone" name="camera_zone"
+                               type="text" maxlength="100"
+                               placeholder="e.g. Western Forest" required>
                     </label>
-                    <label>Initial Status
+
+                    <label>
+                        Initial Status
                         <select id="camera-status" name="camera_status" required>
                             <option value="Online">Online</option>
                             <option value="Warning">Warning</option>
                             <option value="Offline">Offline</option>
                         </select>
                     </label>
+
+                    <label>
+                        Power Source
+                        <select id="camera-power-source" name="power_source">
+                            <option value="unknown">Not known</option>
+                            <option value="electricity">Direct electricity</option>
+                            <option value="solar">Solar powered</option>
+                            <option value="battery">Battery powered</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </label>
+
+                    <label>
+                        Backup Battery
+                        <select id="camera-backup-battery" name="backup_battery">
+                            <option value="unknown">Not known</option>
+                            <option value="yes">Yes</option>
+                            <option value="no">No</option>
+                        </select>
+                    </label>
+
+                    <label>
+                        Battery Monitoring
+                        <select id="camera-battery-monitoring"
+                                name="battery_monitoring">
+                            <option value="unknown">Not known</option>
+                            <option value="yes">Available</option>
+                            <option value="no">Unavailable</option>
+                        </select>
+                    </label>
+
+                    <label>
+                        Battery Level (%)
+                        <input type="number" id="camera-battery-percent"
+                               name="battery_percent" min="0" max="100"
+                               step="0.1" placeholder="Optional">
+                    </label>
+
+                    <label>
+                        Battery Voltage (V)
+                        <input type="number" id="camera-battery-voltage"
+                               name="battery_voltage" min="0"
+                               step="0.01" placeholder="Optional">
+                    </label>
                 </div>
 
                 <div class="form-actions">
-                    <button type="submit" class="primary-btn" id="add-camera-button">
+                    <button type="submit" class="primary-btn"
+                            id="add-camera-button">
                         Save Camera
                     </button>
+
                     <button type="button" class="secondary-btn"
-                            id="reset-camera-form">Clear</button>
+                            id="reset-camera-form">
+                        Clear
+                    </button>
                 </div>
-                <p id="camera-form-message" role="status" aria-live="polite"></p>
+
+                <p id="camera-form-message" role="status"
+                   aria-live="polite"></p>
             </form>
         </section>
 
-        <!-- CONNECTED DEVICES -->
-        <section class="panel page-section" id="connected-camera-devices">
-            <p class="eyebrow">CONNECTED CAMERA STATION</p>
-            <h2>Connected Camera Devices</h2>
-            <p class="muted">
-                Discover a camera, start its live preview, and capture wildlife images.
+        <!-- CAMERA HEALTH -->
+        <section class="panel" id="camera-health">
+            <div class="section-heading">
+                <div>
+                    <p class="eyebrow">DEVICE MONITORING</p>
+                    <h2>Camera Health</h2>
+                    <p class="muted">
+                        Monitor camera connectivity, last check-in,
+                        power supply, battery readings, and telemetry.
+                    </p>
+                </div>
+
+                <button type="button" class="secondary-btn"
+                        id="refresh-camera-health">
+                    ↻ Refresh Health
+                </button>
+            </div>
+
+            <div class="metrics">
+                <article class="metric">
+                    <span>ONLINE</span>
+                    <h2 id="health-online-count">—</h2>
+                    <p>Recently seen</p>
+                </article>
+
+                <article class="metric">
+                    <span>WARNING</span>
+                    <h2 id="health-warning-count">—</h2>
+                    <p>Needs attention</p>
+                </article>
+
+                <article class="metric">
+                    <span>OFFLINE</span>
+                    <h2 id="health-offline-count">—</h2>
+                    <p>Not recently seen</p>
+                </article>
+
+                <article class="metric">
+                    <span>UNKNOWN</span>
+                    <h2 id="health-unknown-count">—</h2>
+                    <p>Insufficient health data</p>
+                </article>
+            </div>
+
+            <div class="camera-filters">
+                <input type="search" id="health-camera-search"
+                       placeholder="Search camera ID or zone..."
+                       aria-label="Search camera health">
+
+                <select id="health-status-filter"
+                        aria-label="Filter camera health">
+                    <option value="all">All health statuses</option>
+                    <option value="Online">Online</option>
+                    <option value="Warning">Warning</option>
+                    <option value="Offline">Offline</option>
+                    <option value="Unknown">Unknown</option>
+                </select>
+            </div>
+
+            <p id="camera-health-message" class="muted"
+               role="status" aria-live="polite">
+                Camera health information is loading...
             </p>
 
-            <div class="device-banner">
-                <div>
-                    <span class="device-pulse"></span>
-                    <strong>Local camera station</strong>
-                    <p class="muted">Select a device below to begin.</p>
-                </div>
-                <span class="device-illustration" aria-hidden="true">📷</span>
+            <div id="camera-health-list" class="camera-grid">
+                Loading camera health...
             </div>
+        </section>
+
+        <!-- CONNECTED CAMERA DEVICES -->
+        <section class="panel" id="connected-camera-devices">
+            <p class="eyebrow">DEVICE CONNECTION</p>
+            <h2>Connected Camera Devices</h2>
+            <p class="muted">
+                Detect a webcam, preview its live feed, capture an image,
+                and register the selected device.
+            </p>
 
             <div class="camera-form">
                 <div class="form-grid">
-                    <label for="connected-device-select">Connected Device
+                    <label for="connected-device-select">
+                        Select Connected Device
                         <select id="connected-device-select">
                             <option value="">Detect cameras to begin</option>
                         </select>
                     </label>
-                    <label for="connected-camera-zone">Forest Zone
+
+                    <label for="connected-camera-zone">
+                        Forest Zone
                         <input id="connected-camera-zone" type="text"
                                maxlength="100" placeholder="e.g. Western Forest">
                     </label>
-                    <label for="connected-camera-id">Camera ID
+
+                    <label for="connected-camera-id">
+                        Camera ID
                         <input id="connected-camera-id" type="text"
                                maxlength="20" placeholder="e.g. CAM-006">
                     </label>
@@ -292,66 +376,82 @@
 
                 <div class="form-actions">
                     <button type="button" class="secondary-btn"
-                            id="detect-connected-cameras">Detect Cameras</button>
+                            id="detect-connected-cameras">
+                        Detect Cameras
+                    </button>
+
                     <button type="button" class="secondary-btn"
-                            id="start-connected-camera" disabled>Start Selected Camera</button>
+                            id="start-connected-camera">
+                        Start Selected Camera
+                    </button>
+
                     <button type="button" class="primary-btn"
-                            id="capture-connected-camera" disabled>Capture Photo</button>
+                            id="capture-connected-camera" disabled>
+                        Capture and Analyze
+                    </button>
+
                     <button type="button" class="secondary-btn"
-                            id="stop-connected-camera" disabled>Stop Camera</button>
+                            id="stop-connected-camera" disabled>
+                        Stop Camera
+                    </button>
+
                     <button type="button" class="primary-btn"
-                            id="register-connected-camera" disabled>Register Selected Camera</button>
+                            id="register-connected-camera" disabled>
+                        Register Selected Camera
+                    </button>
                 </div>
 
-                <div class="live-camera-wrapper" id="live-camera-wrapper">
-                    <video id="connected-camera-video" autoplay playsinline muted></video>
-                    <canvas id="connected-camera-canvas" aria-hidden="true"></canvas>
+                <div style="position:relative; margin-top:20px; max-width:640px;">
+                    <video id="connected-camera-video" autoplay
+                           playsinline muted
+                           style="display:block;width:100%;background:#000;border-radius:10px;">
+                    </video>
+                    <canvas id="connected-camera-canvas" hidden></canvas>
                 </div>
 
-                <p id="connected-camera-message" role="status" aria-live="polite">
+                <p id="connected-camera-message" role="status"
+                   aria-live="polite">
                     Detect cameras to begin.
                 </p>
             </div>
         </section>
 
-        <!-- AI DETECTION AND IMAGE ANALYSIS -->
-        <section class="panel page-section" id="analysis">
-            <p class="eyebrow">AI WILDLIFE DETECTION</p>
-            <h2>Wildlife Image Analysis</h2>
+        <!-- IMAGE ANALYSIS -->
+        <section class="panel" id="analysis">
+            <p class="eyebrow">COMPUTER VISION</p>
+            <h2>Image Quality Analysis</h2>
             <p class="muted">
-                Upload a JPG or PNG image to run wildlife detection and image-quality analysis.
+                Upload a JPG or PNG image for image-quality analysis
+                and wildlife detection. Save results to MySQL.
             </p>
-
-            <div class="detection-banner">
-                <span class="detection-symbol">◎</span>
-                <div>
-                    <strong>Computer vision analysis</strong>
-                    <p class="muted">
-                        Select an image below to run your existing detection workflow.
-                    </p>
-                </div>
-            </div>
 
             <label class="upload-box" for="image-upload">
                 <span class="upload-icon">↥</span>
                 <strong>Select a wildlife image</strong>
                 <span class="muted">JPG or PNG · Maximum 10 MB</span>
-                <input id="image-upload" type="file" accept="image/jpeg,image/png">
+                <input id="image-upload" type="file"
+                       accept="image/jpeg,image/png">
             </label>
 
             <div id="preview-area"></div>
         </section>
 
-        <!-- HISTORY -->
-        <section class="panel page-section" id="history">
+        <!-- ANALYSIS HISTORY -->
+        <section class="panel" id="history">
             <div class="section-heading">
                 <div>
-                    <p class="eyebrow">WILDLIFE ARCHIVE</p>
+                    <p class="eyebrow">RECORDED RESULTS</p>
                     <h2>Analysis History</h2>
-                    <p class="muted">Browse saved images and previous results.</p>
+                    <p class="muted">
+                        Browse saved images, quality scores,
+                        and wildlife detection results.
+                    </p>
                 </div>
+
                 <button type="button" class="secondary-btn"
-                        id="refresh-history">↻ Refresh History</button>
+                        id="refresh-history">
+                    ↻ Refresh History
+                </button>
             </div>
 
             <div id="analysis-list" class="table-container">
@@ -360,51 +460,17 @@
         </section>
 
         <!-- REPORTS -->
-        <section class="panel page-section" id="reports">
-            <p class="eyebrow">CONSERVATION INTELLIGENCE</p>
-            <h2>Reports &amp; Reliability</h2>
-            <p class="muted">
-                Current summary based on the camera and analysis records loaded by WildSense.
-            </p>
-
-            <div class="report-grid">
-                <article class="report-card">
-                    <span>Registered cameras</span>
-                    <strong id="report-camera-count">—</strong>
-                    <p class="muted">Camera network records</p>
-                </article>
-                <article class="report-card">
-                    <span>Online cameras</span>
-                    <strong id="report-online-count">—</strong>
-                    <p class="muted">Reported online status</p>
-                </article>
-                <article class="report-card">
-                    <span>Warnings</span>
-                    <strong id="report-warning-count">—</strong>
-                    <p class="muted">Cameras needing attention</p>
-                </article>
-                <article class="report-card">
-                    <span>Offline cameras</span>
-                    <strong id="report-offline-count">—</strong>
-                    <p class="muted">Reported offline status</p>
-                </article>
-            </div>
-
-            <p class="muted report-note">
-                These are dashboard summaries, not a downloadable report generator.
-                Detailed reporting can be added after the navigation and existing features are verified.
-            </p>
-        </section>
-
-        <footer>
+        <footer id="reports">
             <span>🌿 WildSense</span>
             <span>Edge AI Wildlife Monitoring · Local Prototype</span>
         </footer>
+
     </main>
 
-    <!-- Load only one background controller to prevent scene conflicts. -->
+    <!-- 3D BACKGROUND + EXISTING JAVASCRIPT -->
     <script src="{{ url_for('static', filename='js/page-scenes.js') }}"></script>
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
     <script src="{{ url_for('static', filename='js/history.js') }}"></script>
+
 </body>
 </html>
