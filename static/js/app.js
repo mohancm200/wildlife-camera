@@ -1,8 +1,15 @@
 
 document.addEventListener("DOMContentLoaded", () => {
+    "use strict";
+
+    // --------------------------------------------------
+    // WILDSENSE CORE SETUP
+    // --------------------------------------------------
+
     const $ = id => document.getElementById(id);
 
     let cameras = [];
+    let healthCameras = [];
     let stream = null;
     let activeDeviceId = null;
     let detectionTimer = null;
@@ -12,6 +19,8 @@ document.addEventListener("DOMContentLoaded", () => {
     let previewUrl = null;
     let editingCameraId = null;
     let analysisInProgress = false;
+    let registrationInProgress = false;
+    let wizardCamera = null;
 
     const cameraSelect = $("connected-device-select");
     const video = $("connected-camera-video");
@@ -25,10 +34,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const el = (tag, cls = "", text = "") => {
         const node = document.createElement(tag);
+
         if (cls) node.className = cls;
+
         if (text !== undefined && text !== null) {
             node.textContent = String(text);
         }
+
         return node;
     };
 
@@ -38,10 +50,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
         try {
             data = await response.json();
-        } catch (_) {}
+        } catch (_) {
+            data = {};
+        }
 
         if (!response.ok) {
-            throw new Error(data.error || `Request failed (${response.status})`);
+            throw new Error(
+                data.error ||
+                data.message ||
+                `Request failed (${response.status})`
+            );
         }
 
         return data;
@@ -49,15 +67,44 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function message(text, error = false) {
         if (!cameraMessage) return;
+
         cameraMessage.textContent = text;
         cameraMessage.style.color = error ? "#ff9999" : "#9ee6ad";
     }
 
     function formMessage(text, type = "") {
         const target = $("camera-form-message");
-        if (target) {
-            target.textContent = text;
-            target.className = type;
+
+        if (!target) return;
+
+        target.textContent = text;
+        target.className = type;
+    }
+
+    function wizardMessage(text, error = false) {
+        const target = $("camera-wizard-message");
+
+        if (!target) return;
+
+        target.textContent = text;
+        target.style.color = error ? "#ff9999" : "";
+    }
+
+    function updateButtons() {
+        const start = $("start-connected-camera");
+        const capture = $("capture-connected-camera");
+        const stop = $("stop-connected-camera");
+        const register = $("register-connected-camera");
+
+        const cameraSelected = Boolean(cameraSelect?.value);
+        const cameraRunning = Boolean(stream?.active);
+
+        if (start) start.disabled = cameraRunning || !cameraSelected;
+        if (capture) capture.disabled = !cameraRunning;
+        if (stop) stop.disabled = !cameraRunning;
+
+        if (register) {
+            register.disabled = !cameraRunning || registrationInProgress;
         }
     }
 
@@ -69,7 +116,10 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!video || !overlay) return;
 
         const parent = video.parentElement;
-        if (parent) parent.style.position = "relative";
+
+        if (parent) {
+            parent.style.position = "relative";
+        }
 
         video.style.display = "block";
         video.style.width = "100%";
@@ -85,25 +135,23 @@ document.addEventListener("DOMContentLoaded", () => {
         overlay.style.display = "block";
     }
 
-    function updateButtons() {
-        const start = $("start-connected-camera");
-        const capture = $("capture-connected-camera");
-        const stop = $("stop-connected-camera");
-        const register = $("register-connected-camera");
-
-        if (start) start.disabled = !!stream || !cameraSelect?.value;
-        if (capture) capture.disabled = !stream;
-        if (stop) stop.disabled = !stream;
-        if (register) register.disabled = !stream;
-    }
-
     function normalizeBox(box, imageWidth, imageHeight) {
         if (!Array.isArray(box) || box.length < 4) return null;
 
         let [x1, y1, x2, y2] = box.map(Number);
-        if (![x1, y1, x2, y2].every(Number.isFinite)) return null;
 
-        if (Math.max(Math.abs(x1), Math.abs(y1), Math.abs(x2), Math.abs(y2)) <= 1.5) {
+        if (![x1, y1, x2, y2].every(Number.isFinite)) {
+            return null;
+        }
+
+        if (
+            Math.max(
+                Math.abs(x1),
+                Math.abs(y1),
+                Math.abs(x2),
+                Math.abs(y2)
+            ) <= 1.5
+        ) {
             x1 *= imageWidth;
             x2 *= imageWidth;
             y1 *= imageHeight;
@@ -116,6 +164,7 @@ document.addEventListener("DOMContentLoaded", () => {
         y2 = Math.max(0, Math.min(imageHeight, y2));
 
         if (x2 <= x1 || y2 <= y1) return null;
+
         return [x1, y1, x2, y2];
     }
 
@@ -123,17 +172,26 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!canvas) return;
 
         const rect = canvas.getBoundingClientRect();
+
         if (!rect.width || !rect.height) return;
 
         const dpr = window.devicePixelRatio || 1;
+
         canvas.width = Math.round(rect.width * dpr);
         canvas.height = Math.round(rect.height * dpr);
 
         const ctx = canvas.getContext("2d");
+
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, rect.width, rect.height);
 
-        if (!sourceWidth || !sourceHeight || !Array.isArray(detections)) return;
+        if (
+            !sourceWidth ||
+            !sourceHeight ||
+            !Array.isArray(detections)
+        ) {
+            return;
+        }
 
         const scale = Math.min(
             rect.width / sourceWidth,
@@ -144,7 +202,12 @@ document.addEventListener("DOMContentLoaded", () => {
         const offsetY = (rect.height - sourceHeight * scale) / 2;
 
         detections.forEach(item => {
-            const box = normalizeBox(item.box, sourceWidth, sourceHeight);
+            const box = normalizeBox(
+                item.box,
+                sourceWidth,
+                sourceHeight
+            );
+
             if (!box) return;
 
             const [x1, y1, x2, y2] = box;
@@ -152,8 +215,11 @@ document.addEventListener("DOMContentLoaded", () => {
             const top = offsetY + y1 * scale;
             const width = (x2 - x1) * scale;
             const height = (y2 - y1) * scale;
+
             const confidence = Number(item.confidence || 0);
-            const label = `${item.label || "Object"} ${(confidence * 100).toFixed(1)}%`;
+            const label =
+                `${item.label || "Object"} ` +
+                `${(confidence * 100).toFixed(1)}%`;
 
             ctx.save();
             ctx.lineWidth = 3;
@@ -164,12 +230,14 @@ document.addEventListener("DOMContentLoaded", () => {
             ctx.shadowBlur = 0;
 
             ctx.font = "bold 14px Arial";
+
             const labelWidth = ctx.measureText(label).width + 12;
             const labelHeight = 24;
             const labelY = Math.max(0, top - labelHeight);
 
             ctx.fillStyle = "#167b39";
             ctx.fillRect(left, labelY, labelWidth, labelHeight);
+
             ctx.fillStyle = "#ffffff";
             ctx.fillText(label, left + 6, labelY + 16);
             ctx.restore();
@@ -177,9 +245,18 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function drawLiveBoxes() {
-        if (!video?.videoWidth || !video?.videoHeight || !overlay) return;
+        if (!video?.videoWidth || !video?.videoHeight || !overlay) {
+            return;
+        }
+
         prepareOverlay();
-        drawBoxes(overlay, liveDetections, video.videoWidth, video.videoHeight);
+
+        drawBoxes(
+            overlay,
+            liveDetections,
+            video.videoWidth,
+            video.videoHeight
+        );
     }
 
     // --------------------------------------------------
@@ -196,24 +273,37 @@ document.addEventListener("DOMContentLoaded", () => {
 
         try {
             if (!navigator.mediaDevices?.getUserMedia) {
-                throw new Error("Camera access requires localhost or HTTPS.");
+                throw new Error(
+                    "Camera access requires localhost or HTTPS."
+                );
             }
 
             if (!stream) {
-                permissionStream = await navigator.mediaDevices.getUserMedia({
-                    video: true,
-                    audio: false
-                });
+                permissionStream =
+                    await navigator.mediaDevices.getUserMedia({
+                        video: true,
+                        audio: false
+                    });
             }
 
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const videoDevices = devices.filter(d => d.kind === "videoinput");
+            const devices =
+                await navigator.mediaDevices.enumerateDevices();
+
+            const videoDevices = devices.filter(
+                device => device.kind === "videoinput"
+            );
+
             const previous = cameraSelect.value;
 
             cameraSelect.replaceChildren();
 
             videoDevices.forEach((device, index) => {
-                const option = el("option", "", device.label || `Camera ${index + 1}`);
+                const option = el(
+                    "option",
+                    "",
+                    device.label || `Camera ${index + 1}`
+                );
+
                 option.value = device.deviceId;
                 cameraSelect.appendChild(option);
             });
@@ -223,25 +313,36 @@ document.addEventListener("DOMContentLoaded", () => {
             }
 
             if (!videoDevices.length) {
-                cameraSelect.appendChild(el("option", "", "No camera found"));
-                cameraSelect.value = "";
+                const option = el("option", "", "No camera found");
+                option.value = "";
+                cameraSelect.appendChild(option);
+
                 message("No accessible camera found.", true);
             } else {
-                message(`Found ${videoDevices.length} camera device(s).`);
+                message(
+                    `Found ${videoDevices.length} camera device(s).`
+                );
             }
 
             updateButtons();
         } catch (error) {
-            console.error(error);
+            console.error("Camera discovery failed:", error);
             message(error.message, true);
         } finally {
             permissionStream?.getTracks().forEach(track => track.stop());
         }
     }
 
+    // --------------------------------------------------
+    // START CAMERA
+    // --------------------------------------------------
+
     async function startCamera() {
         if (!cameraSelect?.value) {
-            message("Click Detect Cameras and select a camera first.", true);
+            message(
+                "Click Detect Cameras and select a camera first.",
+                true
+            );
             return;
         }
 
@@ -259,7 +360,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             });
 
-            if (!video) throw new Error("Camera video element not found.");
+            if (!video) {
+                throw new Error("Camera video element not found.");
+            }
 
             video.srcObject = stream;
             video.autoplay = true;
@@ -267,10 +370,12 @@ document.addEventListener("DOMContentLoaded", () => {
             video.muted = true;
 
             await video.play();
+
             activeDeviceId = cameraSelect.value;
 
             prepareOverlay();
             updateButtons();
+
             message("Camera connected. Starting live detection.");
 
             stream.getVideoTracks()[0].addEventListener("ended", () => {
@@ -279,19 +384,34 @@ document.addEventListener("DOMContentLoaded", () => {
             });
 
             await runLiveDetection();
-            detectionTimer = setInterval(runLiveDetection, 1800);
+
+            if (stream) {
+                detectionTimer = setInterval(
+                    runLiveDetection,
+                    1800
+                );
+            }
         } catch (error) {
-            console.error(error);
+            console.error("Could not start camera:", error);
+
             stopCamera(false);
             message(`Could not start camera: ${error.message}`, true);
         }
     }
 
+    // --------------------------------------------------
+    // STOP CAMERA
+    // --------------------------------------------------
+
     function stopCamera(showMessage = true) {
-        if (detectionTimer) clearInterval(detectionTimer);
+        if (detectionTimer) {
+            clearInterval(detectionTimer);
+        }
+
         detectionTimer = null;
 
         stream?.getTracks().forEach(track => track.stop());
+
         stream = null;
         activeDeviceId = null;
         detectionBusy = false;
@@ -300,57 +420,88 @@ document.addEventListener("DOMContentLoaded", () => {
         if (video) video.srcObject = null;
 
         if (overlay) {
-            overlay.getContext("2d").clearRect(0, 0, overlay.width, overlay.height);
+            const ctx = overlay.getContext("2d");
+
+            if (ctx) {
+                ctx.clearRect(0, 0, overlay.width, overlay.height);
+            }
         }
 
         updateButtons();
-        if (showMessage) message("Camera stopped.");
+
+        if (showMessage) {
+            message("Camera stopped.");
+        }
     }
 
     // --------------------------------------------------
-    // LIVE DETECTION
+    // LIVE WILDLIFE DETECTION
     // --------------------------------------------------
 
     async function runLiveDetection() {
-        if (!stream || !video?.videoWidth || detectionBusy) return;
+        if (
+            !stream ||
+            !video?.videoWidth ||
+            detectionBusy
+        ) {
+            return;
+        }
+
         detectionBusy = true;
 
         try {
             const canvas = document.createElement("canvas");
+
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
+
             canvas.getContext("2d").drawImage(video, 0, 0);
 
-            const blob = await new Promise(resolve =>
-                canvas.toBlob(resolve, "image/jpeg", 0.85)
-            );
+            const blob = await new Promise(resolve => {
+                canvas.toBlob(resolve, "image/jpeg", 0.85);
+            });
 
             if (!blob || !stream) return;
 
-            const data = new FormData();
-            data.append("image", blob, "live-frame.jpg");
+            const formData = new FormData();
+
+            formData.append("image", blob, "live-frame.jpg");
 
             const result = await api("/api/detect", {
                 method: "POST",
-                body: data
+                body: formData
             });
 
             if (!stream) return;
 
             const wildlife = result.wildlife_detection || {};
+
             liveDetections = Array.isArray(wildlife.detections)
                 ? wildlife.detections
-                : [];
+                : Array.isArray(result.detections)
+                    ? result.detections
+                    : [];
 
             drawLiveBoxes();
-            message(`Live detection active — ${wildlife.count ?? liveDetections.length} object(s) detected.`);
+
+            message(
+                `Live detection active — ${
+                    wildlife.count ?? liveDetections.length
+                } object(s) detected.`
+            );
         } catch (error) {
             console.error("Live detection failed:", error);
-            message(`Live detection error: ${error.message}`, true);
+
+            message(
+                `Live detection error: ${error.message}`,
+                true
+            );
         } finally {
             detectionBusy = false;
         }
     }
+
+    // Part 2 continues with photo capture and image analysis.
 
     // --------------------------------------------------
     // CAPTURE PHOTO
@@ -365,20 +516,24 @@ document.addEventListener("DOMContentLoaded", () => {
         const canvas = document.createElement("canvas");
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
+
         canvas.getContext("2d").drawImage(video, 0, 0);
 
-        const blob = await new Promise(resolve =>
-            canvas.toBlob(resolve, "image/jpeg", 0.92)
-        );
+        const blob = await new Promise(resolve => {
+            canvas.toBlob(resolve, "image/jpeg", 0.92);
+        });
 
         if (!blob) {
             message("Could not capture photo.", true);
             return;
         }
 
+        const filename =
+            `wildsense-${new Date().toISOString().replace(/[:.]/g, "-")}.jpg`;
+
         pendingPhoto = new File(
             [blob],
-            `wildsense-${new Date().toISOString().replace(/[:.]/g, "-")}.jpg`,
+            filename,
             { type: "image/jpeg" }
         );
 
@@ -386,12 +541,14 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // --------------------------------------------------
-    // IMAGE QUALITY — SCORES OUT OF 100
+    // IMAGE QUALITY CALCULATION
     // --------------------------------------------------
 
     function calculateQuality(image) {
         const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        const ctx = canvas.getContext("2d", {
+            willReadFrequently: true
+        });
 
         const width = Math.min(image.naturalWidth, 600);
         const height = Math.max(
@@ -401,9 +558,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
         canvas.width = width;
         canvas.height = height;
+
         ctx.drawImage(image, 0, 0, width, height);
 
-        const pixels = ctx.getImageData(0, 0, width, height).data;
+        const pixels = ctx.getImageData(
+            0, 0, width, height
+        ).data;
+
         const gray = new Float32Array(width * height);
         let total = 0;
 
@@ -418,6 +579,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         const brightness = total / gray.length;
+
         let variance = 0;
         let edgeEnergy = 0;
         let pixelCount = 0;
@@ -426,6 +588,7 @@ document.addEventListener("DOMContentLoaded", () => {
             for (let x = 1; x < width - 1; x++) {
                 const i = y * width + x;
                 const difference = gray[i] - brightness;
+
                 variance += difference * difference;
 
                 const laplacian =
@@ -443,22 +606,22 @@ document.addEventListener("DOMContentLoaded", () => {
         const contrast = Math.sqrt(variance / gray.length);
         const blur = edgeEnergy / Math.max(1, pixelCount);
 
-        // Provisional brightness score: best near the middle of 0–255.
         const brightnessScore = Math.max(
             0,
-            100 - (Math.abs(brightness - 127.5) / 127.5) * 100
+            100 - Math.abs(brightness - 127.5) / 127.5 * 100
         );
 
-        // Assumes contrast is grayscale standard deviation.
         const contrastScore = Math.min(
             100,
-            Math.max(0, (contrast / 64) * 100)
+            Math.max(0, contrast / 64 * 100)
         );
 
-        // Laplacian variance is a sharpness indicator.
         const sharpnessScore = Math.min(
             100,
-            Math.max(0, 100 * Math.log1p(blur) / Math.log1p(1000))
+            Math.max(
+                0,
+                100 * Math.log1p(blur) / Math.log1p(1000)
+            )
         );
 
         const overallScore =
@@ -478,7 +641,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // --------------------------------------------------
-    // ANALYZE IMAGE
+    // IMAGE PREVIEW AND SERVER DETECTION
     // --------------------------------------------------
 
     async function previewAndAnalyze(file) {
@@ -495,10 +658,12 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         if (analysisInProgress) return;
+
         analysisInProgress = true;
         pendingPhoto = file;
 
         if (previewUrl) URL.revokeObjectURL(previewUrl);
+
         previewUrl = URL.createObjectURL(file);
         previewArea.replaceChildren();
 
@@ -528,24 +693,29 @@ document.addEventListener("DOMContentLoaded", () => {
                     resolve();
                 } else {
                     image.onload = resolve;
-                    image.onerror = () => reject(new Error("Could not load image."));
+                    image.onerror = () => {
+                        reject(new Error("Could not load image."));
+                    };
                 }
             });
 
             const quality = calculateQuality(image);
             const formData = new FormData();
+
             formData.append("image", file, file.name);
 
-            // Detection-only endpoint: the image is not saved until Keep Image.
             const result = await api("/api/detect", {
                 method: "POST",
                 body: formData
             });
 
             const wildlife = result.wildlife_detection || {};
+
             const detections = Array.isArray(wildlife.detections)
                 ? wildlife.detections
-                : [];
+                : Array.isArray(result.detections)
+                    ? result.detections
+                    : [];
 
             drawBoxes(
                 imageCanvas,
@@ -582,7 +752,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 )
             );
 
-            // Keep Image saves through the existing Flask endpoint.
+            // --------------------------------------------------
+            // KEEP OR DISCARD IMAGE
+            // --------------------------------------------------
+
             const actions = el("div", "review-actions");
             const keepButton = el("button", "keep-btn", "Keep Image");
             const discardButton = el("button", "discard-btn", "Discard Image");
@@ -591,7 +764,7 @@ document.addEventListener("DOMContentLoaded", () => {
             discardButton.type = "button";
 
             keepButton.addEventListener("click", async () => {
-                if (!pendingPhoto) return;
+                if (!pendingPhoto || registrationInProgress) return;
 
                 keepButton.disabled = true;
                 discardButton.disabled = true;
@@ -599,10 +772,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 try {
                     const saveData = new FormData();
-                    saveData.append("image", pendingPhoto, pendingPhoto.name);
+
+                    saveData.append(
+                        "image",
+                        pendingPhoto,
+                        pendingPhoto.name
+                    );
 
                     const cameraId = $("analysis-camera")?.value;
-                    if (cameraId) saveData.append("camera_id", cameraId);
+
+                    if (cameraId) {
+                        saveData.append("camera_id", cameraId);
+                    }
 
                     const saved = await api("/api/analyze", {
                         method: "POST",
@@ -613,32 +794,51 @@ document.addEventListener("DOMContentLoaded", () => {
                     await loadAnalyses();
 
                     results.appendChild(
-                        el("p", "", saved.message || "Image and analysis saved successfully.")
+                        el(
+                            "p",
+                            "",
+                            saved.message || "Image and analysis saved successfully."
+                        )
                     );
 
                     actions.replaceChildren();
 
-                    const closeButton = el("button", "secondary-btn", "Close Image");
-                    const anotherButton = el("button", "keep-btn", "Analyze Another Image");
+                    const closeButton = el(
+                        "button",
+                        "secondary-btn",
+                        "Close Image"
+                    );
+
+                    const anotherButton = el(
+                        "button",
+                        "keep-btn",
+                        "Analyze Another Image"
+                    );
 
                     closeButton.type = "button";
                     anotherButton.type = "button";
 
                     closeButton.addEventListener("click", clearPreview);
+
                     anotherButton.addEventListener("click", () => {
                         clearPreview();
                         imageUpload?.click();
                     });
 
                     actions.append(closeButton, anotherButton);
-                    message("Image saved. You can close it or analyze another image.");
+
+                    message("Image saved successfully.");
                 } catch (error) {
                     keepButton.disabled = false;
                     discardButton.disabled = false;
                     keepButton.textContent = "Keep Image";
 
                     results.appendChild(
-                        el("p", "error-message", `Could not save image: ${error.message}`)
+                        el(
+                            "p",
+                            "error-message",
+                            `Could not save image: ${error.message}`
+                        )
                     );
 
                     message(error.message, true);
@@ -653,31 +853,47 @@ document.addEventListener("DOMContentLoaded", () => {
 
             actions.append(keepButton, discardButton);
             previewArea.appendChild(actions);
+
             message("Analysis complete. Choose Keep Image or Discard Image.");
         } catch (error) {
             console.error("Image analysis failed:", error);
+
             results.replaceChildren(
                 el("h3", "", "Analysis Error"),
                 el("p", "error-message", error.message)
             );
+
             message(error.message, true);
         } finally {
             analysisInProgress = false;
         }
     }
 
+    // --------------------------------------------------
+    // CLEAR IMAGE PREVIEW
+    // --------------------------------------------------
+
     function clearPreview() {
         pendingPhoto = null;
 
-        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        if (previewUrl) {
+            URL.revokeObjectURL(previewUrl);
+        }
+
         previewUrl = null;
 
-        if (previewArea) previewArea.replaceChildren();
-        if (imageUpload) imageUpload.value = "";
+        if (previewArea) {
+            previewArea.replaceChildren();
+        }
+
+        if (imageUpload) {
+            imageUpload.value = "";
+        }
     }
 
     imageUpload?.addEventListener("change", () => {
         const file = imageUpload.files?.[0];
+
         if (!file) return;
 
         if (pendingPhoto || analysisInProgress) {
@@ -689,12 +905,17 @@ document.addEventListener("DOMContentLoaded", () => {
         previewAndAnalyze(file);
     });
 
+    // Part 3 continues with camera forms and the registration wizard.
+
     // --------------------------------------------------
     // CAMERA REGISTRATION FORM
     // --------------------------------------------------
 
     function openCameraForm(camera = null) {
-        if (!cameraForm) return;
+        if (!cameraForm) {
+            alert("Camera registration form was not found.");
+            return;
+        }
 
         cameraForm.reset();
         editingCameraId = camera ? camera.id : null;
@@ -704,8 +925,38 @@ document.addEventListener("DOMContentLoaded", () => {
             $("camera-id").value = camera?.id || "";
         }
 
-        if ($("camera-zone")) $("camera-zone").value = camera?.zone || "";
-        if ($("camera-status")) $("camera-status").value = camera?.status || "Online";
+        if ($("camera-zone")) {
+            $("camera-zone").value = camera?.zone || "";
+        }
+
+        if ($("camera-status")) {
+            $("camera-status").value = camera?.status || "Online";
+        }
+
+        if ($("camera-power-source")) {
+            $("camera-power-source").value =
+                camera?.power_source || "unknown";
+        }
+
+        if ($("camera-backup-battery")) {
+            $("camera-backup-battery").value =
+                camera?.backup_battery || "unknown";
+        }
+
+        if ($("camera-battery-monitoring")) {
+            $("camera-battery-monitoring").value =
+                camera?.battery_monitoring || "unknown";
+        }
+
+        if ($("camera-battery-percent")) {
+            $("camera-battery-percent").value =
+                camera?.battery_percent ?? "";
+        }
+
+        if ($("camera-battery-voltage")) {
+            $("camera-battery-voltage").value =
+                camera?.battery_voltage ?? "";
+        }
 
         if ($("camera-form-title")) {
             $("camera-form-title").textContent =
@@ -719,7 +970,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
         cameraForm.hidden = false;
         formMessage("");
-        cameraForm.scrollIntoView({ behavior: "smooth", block: "center" });
+
+        cameraForm.scrollIntoView({
+            behavior: "smooth",
+            block: "center"
+        });
     }
 
     function closeCameraForm() {
@@ -729,182 +984,594 @@ document.addEventListener("DOMContentLoaded", () => {
         cameraForm.hidden = true;
         editingCameraId = null;
 
-        if ($("camera-id")) $("camera-id").disabled = false;
+        if ($("camera-id")) {
+            $("camera-id").disabled = false;
+        }
+
         formMessage("");
     }
 
-    function registerSelectedCamera() {
-        if (!stream?.active || !activeDeviceId) {
-            message("Start the camera before registering it.", true);
-            return;
-        }
-
-        openCameraForm();
-
-        if ($("camera-id")) {
-            $("camera-id").value = `CAM-${Date.now().toString().slice(-8)}`;
-        }
-
-        if ($("camera-zone")) {
-            $("camera-zone").value = $("connected-camera-zone")?.value.trim() || "";
-        }
-
-        if ($("camera-status")) $("camera-status").value = "Online";
-
-        if ($("connected-camera-id")?.value.trim() && $("camera-id")) {
-            $("camera-id").value = $("connected-camera-id").value.trim().toUpperCase();
-        }
-
-        if ($("connected-camera-zone")?.value.trim() && $("camera-zone")) {
-            $("camera-zone").value = $("connected-camera-zone").value.trim();
-        }
-
-        formMessage("Check the camera ID and forest zone, then save the camera.");
-    }
-
-    cameraForm?.addEventListener("submit", async event => {
+    $("show-add-camera")?.addEventListener("click", event => {
         event.preventDefault();
-
-        const camera = {
-            id: $("camera-id")?.value.trim().toUpperCase(),
-            zone: $("camera-zone")?.value.trim(),
-            status: $("camera-status")?.value
-        };
-
-        const editing = editingCameraId !== null;
-        const oldId = editingCameraId;
-
-        try {
-            if (!camera.id || !camera.zone) {
-                throw new Error("Camera ID and forest zone are required.");
-            }
-
-            const result = await api(
-                editing
-                    ? `/api/cameras/${encodeURIComponent(oldId)}`
-                    : "/api/cameras",
-                {
-                    method: editing ? "PUT" : "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(camera)
-                }
-            );
-
-            closeCameraForm();
-            await loadCameras();
-            alert(result.message || "Camera saved successfully.");
-        } catch (error) {
-            formMessage(error.message, "error-message");
-        }
+        openCameraForm();
     });
 
-    $("show-add-camera")?.addEventListener("click", () => {
+    $("cancel-camera-form")?.addEventListener("click", event => {
+        event.preventDefault();
+        closeCameraForm();
+    });
+
+    $("reset-camera-form")?.addEventListener("click", event => {
+        event.preventDefault();
+
+        const id = $("camera-id")?.value || "";
+        const zone = $("camera-zone")?.value || "";
+        const status = $("camera-status")?.value || "Online";
+
+        cameraForm?.reset();
+
+        if ($("camera-id")) $("camera-id").value = id;
+        if ($("camera-zone")) $("camera-zone").value = zone;
+        if ($("camera-status")) $("camera-status").value = status;
+
+        formMessage("Optional settings cleared.");
+    });
+
+    // --------------------------------------------------
+    // CONNECTED CAMERA: OPEN HEALTH CONFIGURATION
+    // --------------------------------------------------
+
+    function getHealthWizard() {
+        return $("camera-health-wizard");
+    }
+
+    function showHealthWizard() {
+        const wizard = getHealthWizard();
+
+        if (!wizard) {
+            alert(
+                "Health configuration section was not found. " +
+                "The camera registration wizard HTML must be added to index.html."
+            );
+            return false;
+        }
+
+        wizard.hidden = false;
+        wizard.style.display = "block";
+
+        wizard.scrollIntoView({
+            behavior: "smooth",
+            block: "start"
+        });
+
+        return true;
+    }
+
+    function hideHealthWizard() {
+        const wizard = getHealthWizard();
+
+        if (!wizard) return;
+
+        wizard.hidden = true;
+        wizard.style.display = "none";
+    }
+
+    function readWizardValues() {
+        const wizard = getHealthWizard();
+
+        if (!wizard) {
+            throw new Error("Health configuration wizard is missing.");
+        }
+
+        const cameraId =
+            wizard.dataset.cameraId ||
+            $("connected-camera-id")?.value.trim().toUpperCase() ||
+            "";
+
+        const zone =
+            wizard.dataset.zone ||
+            $("connected-camera-zone")?.value.trim() ||
+            "";
+
+        const powerSource = $("wizard-power-source")?.value || "unknown";
+        const backupBattery = $("wizard-backup-battery")?.value || "unknown";
+        const batteryMonitoring =
+            $("wizard-battery-monitoring")?.value || "unknown";
+        const externalPower =
+            $("wizard-external-power")?.value || "unknown";
+        const telemetryRequired =
+            $("wizard-telemetry-required")?.value || "required";
+
+        return {
+            id: cameraId,
+            camera_id: cameraId,
+            zone,
+            status: "Online",
+
+            power_source: powerSource,
+            backup_battery: backupBattery,
+            battery_monitoring: batteryMonitoring,
+
+            external_power_available: externalPower,
+            telemetry_required: telemetryRequired,
+
+            // Preserve the checkbox selections.
+            lens_checks: $("wizard-lens-checks")
+                ? $("wizard-lens-checks").checked
+                : true,
+
+            image_quality_checks: $("wizard-image-quality-checks")
+                ? $("wizard-image-quality-checks").checked
+                : true
+        };
+    }
+
+    // Register Selected Camera now moves to the wizard.
+    // It must NOT save the camera at this stage.
+    $("register-connected-camera")?.addEventListener(
+        "click",
+        event => {
+            event.preventDefault();
+
+            if (!stream?.active || !activeDeviceId) {
+                alert("Please detect, select, and start a camera first.");
+                return;
+            }
+
+            const cameraId =
+                $("connected-camera-id")?.value.trim().toUpperCase() || "";
+
+            const zone =
+                $("connected-camera-zone")?.value.trim() || "";
+
+            if (!cameraId || !zone) {
+                alert("Please enter both the Camera ID and Forest Zone.");
+                return;
+            }
+
+            const wizard = getHealthWizard();
+
+            if (!wizard) {
+                alert(
+                    "The health configuration wizard is missing from index.html."
+                );
+                return;
+            }
+
+            wizard.dataset.cameraId = cameraId;
+            wizard.dataset.zone = zone;
+            wizard.dataset.deviceId = activeDeviceId;
+
+            wizardCamera = {
+                id: cameraId,
+                zone,
+                status: "Online"
+            };
+
+            const summary = $("camera-wizard-summary");
+
+            if (summary) {
+                summary.textContent =
+                    `Camera ID: ${cameraId} | Forest Zone: ${zone}`;
+            }
+
+            wizardMessage(
+                "Choose the health settings, then confirm registration."
+            );
+
+            showHealthWizard();
+        }
+    );
+
+    // --------------------------------------------------
+    // CONTINUE TO HEALTH CONFIGURATION
+    // --------------------------------------------------
+
+    $("continue-health-configuration")?.addEventListener(
+        "click",
+        event => {
+            event.preventDefault();
+
+            const cameraId =
+                $("connected-camera-id")?.value.trim().toUpperCase() || "";
+
+            const zone =
+                $("connected-camera-zone")?.value.trim() || "";
+
+            if (!cameraId || !zone) {
+                alert("Please enter both the Camera ID and Forest Zone.");
+                return;
+            }
+
+            if (!stream?.active || !activeDeviceId) {
+                alert("Please start the selected camera first.");
+                return;
+            }
+
+            const wizard = getHealthWizard();
+
+            if (!wizard) {
+                alert(
+                    "Could not find #camera-health-wizard in index.html."
+                );
+                return;
+            }
+
+            wizard.dataset.cameraId = cameraId;
+            wizard.dataset.zone = zone;
+            wizard.dataset.deviceId = activeDeviceId;
+
+            wizardCamera = {
+                id: cameraId,
+                zone,
+                status: "Online"
+            };
+
+            const summary = $("camera-wizard-summary");
+
+            if (summary) {
+                summary.textContent =
+                    `Camera ID: ${cameraId} | Forest Zone: ${zone}`;
+            }
+
+            wizardMessage(
+                "Configure the health settings and confirm registration."
+            );
+
+            showHealthWizard();
+        }
+    );
+
+    // --------------------------------------------------
+    // BACK FROM HEALTH CONFIGURATION
+    // --------------------------------------------------
+
+    $("back-camera-wizard")?.addEventListener("click", event => {
+        event.preventDefault();
+
+        hideHealthWizard();
+
+        $("connected-camera-id")?.focus();
+
         $("connected-camera-devices")?.scrollIntoView({
             behavior: "smooth",
             block: "start"
         });
     });
 
-    $("cancel-camera-form")?.addEventListener("click", closeCameraForm);
+    // --------------------------------------------------
+    // CONFIRM REGISTRATION
+    // --------------------------------------------------
 
-    $("reset-camera-form")?.addEventListener("click", () => {
-        if (editingCameraId !== null) {
-            const camera = cameras.find(c => c.id === editingCameraId);
-            if (camera) openCameraForm(camera);
-        } else {
-            cameraForm?.reset();
-            formMessage("");
+    $("confirm-register-camera")?.addEventListener(
+        "click",
+        async event => {
+            event.preventDefault();
+
+            if (registrationInProgress) return;
+
+            let camera;
+
+            try {
+                camera = readWizardValues();
+            } catch (error) {
+                wizardMessage(error.message, true);
+                return;
+            }
+
+            if (!camera.id || !camera.zone) {
+                wizardMessage(
+                    "Camera ID and Forest Zone are required.",
+                    true
+                );
+                return;
+            }
+
+            const button = $("confirm-register-camera");
+            const originalText = button?.textContent || "Confirm Registration";
+
+            registrationInProgress = true;
+
+            if (button) {
+                button.disabled = true;
+                button.textContent = "Registering...";
+            }
+
+            try {
+                const result = await api("/api/cameras", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify(camera)
+                });
+
+                wizardMessage(
+                    result.message || "Camera registered successfully."
+                );
+
+                hideHealthWizard();
+
+                // Reload the existing dashboard data.
+                await loadCameras();
+                await loadCameraHealth();
+
+                message(
+                    `Camera ${camera.id} registered with health settings.`
+                );
+
+                // Do not stop the live camera automatically.
+                wizardCamera = null;
+            } catch (error) {
+                console.error("Camera registration failed:", error);
+
+                wizardMessage(
+                    `Registration failed: ${error.message}`,
+                    true
+                );
+            } finally {
+                registrationInProgress = false;
+
+                if (button) {
+                    button.disabled = false;
+                    button.textContent = originalText;
+                }
+
+                updateButtons();
+            }
+        }
+    );
+
+    // Part 4 continues with saving and editing cameras.
+
+    // --------------------------------------------------
+    // SAVE CAMERA FORM
+    // --------------------------------------------------
+
+    cameraForm?.addEventListener("submit", async event => {
+        event.preventDefault();
+
+        if (registrationInProgress) return;
+
+        const camera = {
+            id: $("camera-id")?.value.trim().toUpperCase() || "",
+            zone: $("camera-zone")?.value.trim() || "",
+            status: $("camera-status")?.value || "Online",
+
+            power_source: $("camera-power-source")?.value || "unknown",
+            backup_battery: $("camera-backup-battery")?.value || "unknown",
+            battery_monitoring:
+                $("camera-battery-monitoring")?.value || "unknown",
+
+            battery_percent:
+                $("camera-battery-percent")?.value === ""
+                    ? null
+                    : Number($("camera-battery-percent")?.value),
+
+            battery_voltage:
+                $("camera-battery-voltage")?.value === ""
+                    ? null
+                    : Number($("camera-battery-voltage")?.value)
+        };
+
+        if (!camera.id || !camera.zone) {
+            formMessage(
+                "Camera ID and Forest Zone are required.",
+                "error-message"
+            );
+            return;
+        }
+
+        if (
+            camera.battery_percent !== null &&
+            (!Number.isFinite(camera.battery_percent) ||
+                camera.battery_percent < 0 ||
+                camera.battery_percent > 100)
+        ) {
+            formMessage(
+                "Battery level must be between 0 and 100.",
+                "error-message"
+            );
+            return;
+        }
+
+        if (
+            camera.battery_voltage !== null &&
+            (!Number.isFinite(camera.battery_voltage) ||
+                camera.battery_voltage < 0)
+        ) {
+            formMessage(
+                "Battery voltage must be zero or greater.",
+                "error-message"
+            );
+            return;
+        }
+
+        const isEditing = editingCameraId !== null;
+        const originalId = editingCameraId;
+        const saveButton = $("add-camera-button");
+        const originalButtonText = saveButton?.textContent || "Save Camera";
+
+        try {
+            if (saveButton) {
+                saveButton.disabled = true;
+                saveButton.textContent = "Saving...";
+            }
+
+            const url = isEditing
+                ? `/api/cameras/${encodeURIComponent(originalId)}`
+                : "/api/cameras";
+
+            const result = await api(url, {
+                method: isEditing ? "PUT" : "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(camera)
+            });
+
+            closeCameraForm();
+
+            await loadCameras();
+            await loadCameraHealth();
+
+            formMessage(
+                result.message || "Camera saved successfully."
+            );
+        } catch (error) {
+            console.error("Camera save failed:", error);
+
+            formMessage(
+                `Could not save camera: ${error.message}`,
+                "error-message"
+            );
+        } finally {
+            if (saveButton) {
+                saveButton.disabled = false;
+                saveButton.textContent = originalButtonText;
+            }
         }
     });
 
     // --------------------------------------------------
-    // CAMERA NETWORK
+    // CAMERA NETWORK DATA
     // --------------------------------------------------
 
     async function loadCameras() {
         try {
             const data = await api("/api/cameras");
-            if (!Array.isArray(data)) throw new Error("Unexpected camera response.");
+
+            if (!Array.isArray(data)) {
+                throw new Error(
+                    "The camera API did not return a list."
+                );
+            }
 
             cameras = data;
 
-            if ($("camera-count")) $("camera-count").textContent = cameras.length;
-            if ($("online-count")) {
-                $("online-count").textContent = cameras.filter(c => c.status === "Online").length;
-            }
-            if ($("warning-count")) {
-                $("warning-count").textContent = cameras.filter(c => c.status === "Warning").length;
-            }
-            if ($("offline-count")) {
-                $("offline-count").textContent = cameras.filter(c => c.status === "Offline").length;
-            }
-
             renderCameras();
             populateCameraSelector();
+            updateCameraMetrics();
 
             if ($("network-summary-text")) {
-                $("network-summary-text").textContent = `${cameras.length} registered camera(s)`;
+                $("network-summary-text").textContent =
+                    `${cameras.length} camera(s) registered`;
             }
 
             if ($("last-refreshed")) {
-                $("last-refreshed").textContent = `Last refreshed: ${new Date().toLocaleTimeString()}`;
+                $("last-refreshed").textContent =
+                    `Last refreshed: ${new Date().toLocaleTimeString()}`;
             }
         } catch (error) {
-            console.error(error);
+            console.error("Could not load cameras:", error);
+
             if (cameraList) {
-                cameraList.textContent = "Could not load cameras. Check Flask and MySQL.";
+                cameraList.replaceChildren(
+                    el(
+                        "p",
+                        "error-message",
+                        `Could not load cameras: ${error.message}`
+                    )
+                );
             }
+        }
+    }
+
+    function updateCameraMetrics() {
+        const online = cameras.filter(
+            camera =>
+                String(camera.status).toLowerCase() === "online"
+        ).length;
+
+        const warning = cameras.filter(
+            camera =>
+                String(camera.status).toLowerCase() === "warning"
+        ).length;
+
+        const offline = cameras.filter(
+            camera =>
+                String(camera.status).toLowerCase() === "offline"
+        ).length;
+
+        if ($("camera-count")) {
+            $("camera-count").textContent = cameras.length;
+        }
+
+        if ($("online-count")) {
+            $("online-count").textContent = online;
+        }
+
+        if ($("warning-count")) {
+            $("warning-count").textContent = warning;
+        }
+
+        if ($("offline-count")) {
+            $("offline-count").textContent = offline;
         }
     }
 
     function populateCameraSelector() {
-        if (!imageUpload?.parentNode) return;
+        const select = $("analysis-camera");
 
-        let select = $("analysis-camera");
+        // This selector is optional in the current index.html.
+        if (!select) return;
 
-        if (!select) {
-            const label = el("label", "", "Associate with a registered camera (optional):");
-            label.style.display = "block";
-            label.style.margin = "12px 0 6px";
-
-            select = el("select");
-            select.id = "analysis-camera";
-            select.style.cssText = "padding:8px;max-width:100%;";
-
-            imageUpload.parentNode.insertBefore(label, imageUpload);
-            imageUpload.parentNode.insertBefore(select, imageUpload);
-        }
-
-        const previous = select.value;
+        const previousValue = select.value;
         select.replaceChildren();
 
-        const none = el("option", "", "No camera selected");
-        none.value = "";
-        select.appendChild(none);
+        const emptyOption = el(
+            "option",
+            "",
+            "Select a camera (optional)"
+        );
+
+        emptyOption.value = "";
+        select.appendChild(emptyOption);
 
         cameras.forEach(camera => {
-            const option = el("option", "", `${camera.id} — ${camera.zone}`);
+            const option = el(
+                "option",
+                "",
+                `${camera.id} — ${camera.zone || "Unknown zone"}`
+            );
+
             option.value = camera.id;
             select.appendChild(option);
         });
 
-        if (cameras.some(c => c.id === previous)) select.value = previous;
+        if (cameras.some(camera => camera.id === previousValue)) {
+            select.value = previousValue;
+        }
     }
+
+    // --------------------------------------------------
+    // RENDER CAMERA CARDS
+    // --------------------------------------------------
 
     function renderCameras() {
         if (!cameraList) return;
 
         cameraList.replaceChildren();
 
-        const search = ($("camera-search")?.value || "").trim().toLowerCase();
+        const search = (
+            $("camera-search")?.value || ""
+        ).trim().toLowerCase();
+
         const filter = $("camera-status-filter")?.value || "all";
 
         const filtered = cameras.filter(camera => {
-            const matches =
-                String(camera.id || "").toLowerCase().includes(search) ||
-                String(camera.zone || "").toLowerCase().includes(search);
+            const id = String(camera.id || "").toLowerCase();
+            const zone = String(camera.zone || "").toLowerCase();
 
-            return matches && (filter === "all" || camera.status === filter);
+            const matchesSearch =
+                id.includes(search) || zone.includes(search);
+
+            const matchesStatus =
+                filter === "all" ||
+                String(camera.status || "").toLowerCase() ===
+                    filter.toLowerCase();
+
+            return matchesSearch && matchesStatus;
         });
 
         if ($("camera-results-count")) {
@@ -912,39 +1579,73 @@ document.addEventListener("DOMContentLoaded", () => {
                 `Showing ${filtered.length} of ${cameras.length} cameras`;
         }
 
-        if ($("camera-filter-empty")) {
-            $("camera-filter-empty").hidden = filtered.length > 0;
+        if (!filtered.length) {
+            cameraList.appendChild(
+                el("p", "muted", "No cameras match your search.")
+            );
+            return;
         }
 
         filtered.forEach(camera => {
             const card = el("article", "camera-card");
-            const top = el("div", "camera-card-top");
+            const header = el("div", "camera-card-top");
 
-            top.append(
-                el("h3", "", camera.id),
+            header.append(
+                el("h3", "", camera.id || "Unknown camera"),
                 el(
                     "span",
-                    `camera-status ${String(camera.status || "").toLowerCase()}`,
+                    `camera-status ${String(
+                        camera.status || "unknown"
+                    ).toLowerCase()}`,
                     camera.status || "Unknown"
                 )
             );
 
             card.append(
-                top,
-                el("p", "camera-zone", camera.zone || "Unknown zone"),
-                el("p", "camera-last-seen", `Last seen: ${camera.last_seen || "Not available"}`)
+                header,
+                el(
+                    "p",
+                    "camera-zone",
+                    `Zone: ${camera.zone || "Unknown"}`
+                ),
+                el(
+                    "p",
+                    "camera-last-seen",
+                    `Last seen: ${camera.last_seen || "Not available"}`
+                ),
+                el(
+                    "p",
+                    "",
+                    `Power source: ${camera.power_source || "Unknown"}`
+                ),
+                el(
+                    "p",
+                    "",
+                    `Backup battery: ${camera.backup_battery || "Unknown"}`
+                ),
+                el(
+                    "p",
+                    "",
+                    `Battery monitoring: ${
+                        camera.battery_monitoring || "Unknown"
+                    }`
+                )
             );
 
             const actions = el("div", "camera-actions");
-            const edit = el("button", "secondary-btn", "Edit");
-            edit.type = "button";
-            edit.addEventListener("click", () => openCameraForm(camera));
 
-            const remove = el("button", "delete-btn", "Delete");
-            remove.type = "button";
+            const editButton = el("button", "secondary-btn", "Edit");
+            editButton.type = "button";
 
-            remove.addEventListener("click", async () => {
-                if (!confirm(`Delete ${camera.id} (${camera.zone})?`)) return;
+            editButton.addEventListener("click", () => {
+                openCameraForm(camera);
+            });
+
+            const deleteButton = el("button", "delete-btn", "Delete");
+            deleteButton.type = "button";
+
+            deleteButton.addEventListener("click", async () => {
+                if (!confirm(`Delete camera ${camera.id}?`)) return;
 
                 try {
                     const result = await api(
@@ -953,136 +1654,52 @@ document.addEventListener("DOMContentLoaded", () => {
                     );
 
                     await loadCameras();
-                    await loadAnalyses();
-                    alert(result.message || "Camera deleted.");
+                    await loadCameraHealth();
+
+                    alert(
+                        result.message || "Camera deleted successfully."
+                    );
                 } catch (error) {
-                    alert(error.message);
+                    alert(
+                        `Could not delete camera: ${error.message}`
+                    );
                 }
             });
 
-            actions.append(edit, remove);
+            actions.append(editButton, deleteButton);
             card.appendChild(actions);
             cameraList.appendChild(card);
         });
     }
 
     // --------------------------------------------------
-    // ANALYSIS HISTORY
+    // CAMERA SEARCH AND FILTERS
     // --------------------------------------------------
-
-    async function loadAnalyses() {
-        if (!analysisList) return;
-
-        try {
-            const rows = await api("/api/analyses");
-            if (!Array.isArray(rows)) throw new Error("Unexpected history response.");
-
-            analysisList.replaceChildren();
-
-            const scores = rows
-                .map(row => Number(row.reliability_score))
-                .filter(Number.isFinite);
-
-            if ($("reliability-count")) {
-                $("reliability-count").textContent = scores.length
-                    ? `${Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)}%`
-                    : "—";
-            }
-
-            if (!rows.length) {
-                analysisList.textContent = "No image analyses recorded yet.";
-                return;
-            }
-
-            const table = el("table", "analysis-table");
-            const thead = document.createElement("thead");
-            const header = document.createElement("tr");
-
-            ["Camera", "Image", "Reliability", "Decision", "Health", "Saved Image"]
-                .forEach(title => header.appendChild(el("th", "", title)));
-
-            thead.appendChild(header);
-            table.appendChild(thead);
-
-            const tbody = document.createElement("tbody");
-
-            rows.forEach(row => {
-                const tr = document.createElement("tr");
-
-                [
-                    row.camera_id || "Unassigned",
-                    row.image_name || "Unnamed image",
-                    row.reliability_score == null ? "—" : `${row.reliability_score}%`,
-                    row.decision || "—",
-                    row.health_status || "—"
-                ].forEach(value => tr.appendChild(el("td", "", value)));
-
-                const cell = document.createElement("td");
-                const link = el("a", "", "Open image");
-                link.href = `/api/images/${encodeURIComponent(row.id)}`;
-                link.target = "_blank";
-                link.rel = "noopener";
-                cell.appendChild(link);
-                tr.appendChild(cell);
-                tbody.appendChild(tr);
-            });
-
-            table.appendChild(tbody);
-            analysisList.appendChild(table);
-        } catch (error) {
-            console.error(error);
-            analysisList.textContent =
-                "Could not load analysis history. Check Flask and MySQL.";
-        }
-    }
-
-    // --------------------------------------------------
-    // EVENT HANDLERS
-    // --------------------------------------------------
-
-    $("detect-connected-cameras")?.addEventListener("click", detectDevices);
-    $("start-connected-camera")?.addEventListener("click", startCamera);
-    $("capture-connected-camera")?.addEventListener("click", capturePhoto);
-    $("stop-connected-camera")?.addEventListener("click", () => stopCamera());
-    $("register-connected-camera")?.addEventListener("click", registerSelectedCamera);
-
-    cameraSelect?.addEventListener("change", () => {
-        if (stream) stopCamera(false);
-        updateButtons();
-    });
 
     $("camera-search")?.addEventListener("input", renderCameras);
-    $("camera-status-filter")?.addEventListener("change", renderCameras);
-    $("refresh-cameras")?.addEventListener("click", loadCameras);
-    $("refresh-history")?.addEventListener("click", loadAnalyses);
 
-    window.addEventListener("resize", () => {
-        prepareOverlay();
-        drawLiveBoxes();
-    });
+    $("camera-status-filter")?.addEventListener(
+        "change",
+        renderCameras
+    );
 
-    window.addEventListener("beforeunload", () => {
-        stopCamera(false);
-        if (previewUrl) URL.revokeObjectURL(previewUrl);
-    });
+    $("refresh-cameras")?.addEventListener(
+        "click",
+        loadCameras
+    );
 
-    
+    // Part 5 continues with camera health and analysis history.
+
     // --------------------------------------------------
-    // CAMERA HEALTH
+    // CAMERA HEALTH MONITORING
     // --------------------------------------------------
-
-    let healthCameras = [];
 
     async function loadCameraHealth() {
         const list = $("camera-health-list");
-        const message = $("camera-health-message");
+        const healthMessage = $("camera-health-message");
 
-        if (!list) {
-            console.error("Camera Health section is missing from index.html.");
-            return;
-        }
+        if (!list) return;
 
-        if (message) message.textContent = "Loading camera health...";
         list.textContent = "Loading camera health...";
 
         try {
@@ -1129,22 +1746,30 @@ document.addEventListener("DOMContentLoaded", () => {
 
             renderCameraHealth();
 
-            if (message) {
-                message.textContent =
-                    `Health information loaded for ${healthCameras.length} camera(s). ` +
-                    "Battery readings depend on reported device telemetry.";
+            if (healthMessage) {
+                healthMessage.textContent =
+                    `Health information loaded for ${healthCameras.length} camera(s).`;
             }
         } catch (error) {
             console.error("Camera health loading failed:", error);
-            list.textContent = "Could not load camera health.";
-            if (message) {
-                message.textContent = error.message;
+
+            list.replaceChildren(
+                el(
+                    "p",
+                    "error-message",
+                    `Could not load camera health: ${error.message}`
+                )
+            );
+
+            if (healthMessage) {
+                healthMessage.textContent = error.message;
             }
         }
     }
 
     function renderCameraHealth() {
         const list = $("camera-health-list");
+
         if (!list) return;
 
         list.replaceChildren();
@@ -1161,26 +1786,28 @@ document.addEventListener("DOMContentLoaded", () => {
             const zone = String(camera.zone || "").toLowerCase();
             const status = camera.health_status || "Unknown";
 
-            const matchesSearch =
-                id.includes(search) || zone.includes(search);
-
-            const matchesStatus =
-                selectedStatus === "all" || status === selectedStatus;
-
-            return matchesSearch && matchesStatus;
+            return (
+                (id.includes(search) || zone.includes(search)) &&
+                (
+                    selectedStatus === "all" ||
+                    status === selectedStatus
+                )
+            );
         });
 
         if (!filtered.length) {
-            list.textContent = "No cameras match your search or health filter.";
+            list.appendChild(
+                el("p", "muted", "No cameras match the selected filters.")
+            );
             return;
         }
 
         filtered.forEach(camera => {
             const status = camera.health_status || "Unknown";
             const card = el("article", "camera-card");
-            const top = el("div", "camera-card-top");
+            const header = el("div", "camera-card-top");
 
-            top.append(
+            header.append(
                 el("h3", "", camera.id || "Unknown camera"),
                 el(
                     "span",
@@ -1189,9 +1816,14 @@ document.addEventListener("DOMContentLoaded", () => {
                 )
             );
 
+            const valueOrUnknown = value =>
+                value === null || value === undefined || value === ""
+                    ? "Unknown"
+                    : value;
+
             card.append(
-                top,
-                el("p", "camera-zone", `Zone: ${camera.zone || "Unknown"}`),
+                header,
+                el("p", "", `Zone: ${camera.zone || "Unknown"}`),
                 el(
                     "p",
                     "",
@@ -1201,23 +1833,25 @@ document.addEventListener("DOMContentLoaded", () => {
                     "p",
                     "",
                     `Minutes since check-in: ${
-                        camera.minutes_since_seen ?? "Unknown"
+                        valueOrUnknown(camera.minutes_since_seen)
                     }`
                 ),
                 el(
                     "p",
                     "",
-                    `Power source: ${camera.power_source || "Unknown"}`
+                    `Power source: ${valueOrUnknown(camera.power_source)}`
                 ),
                 el(
                     "p",
                     "",
-                    `Backup battery: ${camera.backup_battery || "Unknown"}`
+                    `Backup battery: ${valueOrUnknown(camera.backup_battery)}`
                 ),
                 el(
                     "p",
                     "",
-                    `Battery monitoring: ${camera.battery_monitoring || "Unknown"}`
+                    `Battery monitoring: ${
+                        valueOrUnknown(camera.battery_monitoring)
+                    }`
                 ),
                 el(
                     "p",
@@ -1240,19 +1874,23 @@ document.addEventListener("DOMContentLoaded", () => {
                 el(
                     "p",
                     "",
-                    `Battery health: ${camera.battery_health || "Unknown"}`
-                ),
-                el(
-                    "p",
-                    "",
-                    `External power: ${
-                        camera.external_power_status || "Unknown"
+                    `Battery health: ${
+                        valueOrUnknown(camera.battery_health)
                     }`
                 ),
                 el(
                     "p",
                     "",
-                    `Last telemetry: ${camera.last_telemetry_at || "Not received"}`
+                    `External power: ${
+                        valueOrUnknown(camera.external_power_status)
+                    }`
+                ),
+                el(
+                    "p",
+                    "",
+                    `Last telemetry: ${
+                        camera.last_telemetry_at || "Not received"
+                    }`
                 )
             );
 
@@ -1276,12 +1914,195 @@ document.addEventListener("DOMContentLoaded", () => {
     );
 
     // --------------------------------------------------
+    // IMAGE ANALYSIS HISTORY
+    // --------------------------------------------------
+
+    async function loadAnalyses() {
+        const list = $("analysis-list");
+
+        if (!list) return;
+
+        try {
+            const rows = await api("/api/analyses");
+
+            if (!Array.isArray(rows)) {
+                throw new Error(
+                    "Unexpected analysis history response."
+                );
+            }
+
+            list.replaceChildren();
+
+            if (!rows.length) {
+                list.appendChild(
+                    el(
+                        "p",
+                        "muted",
+                        "No image analyses have been saved yet."
+                    )
+                );
+                return;
+            }
+
+            const table = el("table", "analysis-table");
+            const head = document.createElement("thead");
+            const headingRow = document.createElement("tr");
+
+            [
+                "Camera",
+                "Image",
+                "Reliability",
+                "Decision",
+                "Health",
+                "Saved Image"
+            ].forEach(label => {
+                headingRow.appendChild(el("th", "", label));
+            });
+
+            head.appendChild(headingRow);
+            table.appendChild(head);
+
+            const body = document.createElement("tbody");
+
+            rows.forEach(row => {
+                const tr = document.createElement("tr");
+
+                [
+                    row.camera_id || "Unassigned",
+                    row.image_name || "Unnamed image",
+                    row.reliability_score == null
+                        ? "N/A"
+                        : `${row.reliability_score}%`,
+                    row.decision || "N/A",
+                    row.health_status || "N/A"
+                ].forEach(value => {
+                    tr.appendChild(el("td", "", value));
+                });
+
+                const imageCell = document.createElement("td");
+                const link = el("a", "", "Open image");
+
+                link.href =
+                    `/api/images/${encodeURIComponent(row.id)}`;
+
+                link.target = "_blank";
+                link.rel = "noopener noreferrer";
+
+                imageCell.appendChild(link);
+                tr.appendChild(imageCell);
+
+                body.appendChild(tr);
+            });
+
+            table.appendChild(body);
+            list.appendChild(table);
+        } catch (error) {
+            console.error("Could not load analysis history:", error);
+
+            list.replaceChildren(
+                el(
+                    "p",
+                    "error-message",
+                    `Could not load analysis history: ${error.message}`
+                )
+            );
+        }
+    }
+
+    $("refresh-history")?.addEventListener(
+        "click",
+        loadAnalyses
+    );
+
+    // Part 6 adds final event handlers and initializes WildSense.
+
+    // --------------------------------------------------
+    // SERVER STATUS
+    // --------------------------------------------------
+
+    async function checkServerHealth() {
+        const status = document.querySelector(".system-status");
+
+        if (!status) return;
+
+        try {
+            const result = await api("/health");
+
+            status.title = result.status || "System connected";
+            status.classList.remove("error-message");
+        } catch (error) {
+            console.error("Server health check failed:", error);
+
+            status.title = "System unavailable";
+            status.classList.add("error-message");
+        }
+    }
+
+    // --------------------------------------------------
+    // BUTTON EVENT HANDLERS
+    // --------------------------------------------------
+
+    $("detect-connected-cameras")?.addEventListener(
+        "click",
+        detectDevices
+    );
+
+    $("start-connected-camera")?.addEventListener(
+        "click",
+        startCamera
+    );
+
+    $("capture-connected-camera")?.addEventListener(
+        "click",
+        capturePhoto
+    );
+
+    $("stop-connected-camera")?.addEventListener(
+        "click",
+        () => stopCamera()
+    );
+
+    cameraSelect?.addEventListener("change", () => {
+        if (stream) {
+            stopCamera(false);
+        }
+
+        updateButtons();
+    });
+
+    // Keep the video overlay aligned when the page resizes.
+    window.addEventListener("resize", () => {
+        prepareOverlay();
+        drawLiveBoxes();
+    });
+
+    // Release camera and preview resources when leaving the page.
+    window.addEventListener("beforeunload", () => {
+        stopCamera(false);
+
+        if (previewUrl) {
+            URL.revokeObjectURL(previewUrl);
+        }
+    });
+
+    // --------------------------------------------------
     // INITIALIZE WILDSENSE
     // --------------------------------------------------
 
     prepareOverlay();
     updateButtons();
+
     loadCameras();
     loadCameraHealth();
-    loadCameraHealth();
+    loadAnalyses();
+    checkServerHealth();
+
+    // Refresh server-backed information every 30 seconds.
+    setInterval(() => {
+        loadCameras();
+        loadCameraHealth();
+        loadAnalyses();
+        checkServerHealth();
+    }, 30000);
+
 });
