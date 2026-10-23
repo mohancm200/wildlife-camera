@@ -3,6 +3,7 @@ import json
 import os
 import threading
 from datetime import datetime
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -31,6 +32,39 @@ ALLOWED_YES_NO_UNKNOWN = {"yes", "no", "unknown"}
 _wildlife_model = None
 _model_lock = threading.Lock()
 
+# Preserve the existing MySQL schema.
+# Additional health settings are stored in a JSON file.
+HEALTH_CONFIG_PATH = Path(app.instance_path) / "camera_health_config.json"
+
+
+def read_health_configurations():
+    try:
+        if HEALTH_CONFIG_PATH.exists():
+            value = json.loads(
+                HEALTH_CONFIG_PATH.read_text(encoding="utf-8")
+            )
+            return value if isinstance(value, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        app.logger.exception(
+            "Unable to read camera health configuration file"
+        )
+
+    return {}
+
+
+def save_health_configuration(camera_id, configuration):
+    HEALTH_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    all_configs = read_health_configurations()
+    all_configs[camera_id] = configuration
+
+    temporary = HEALTH_CONFIG_PATH.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps(all_configs, indent=2),
+        encoding="utf-8"
+    )
+    temporary.replace(HEALTH_CONFIG_PATH)
+
 
 # --------------------------------------------------
 # WILDLIFE MODEL
@@ -43,8 +77,15 @@ def get_wildlife_model():
         with _model_lock:
             if _wildlife_model is None:
                 device = "cuda" if torch.cuda.is_available() else "cpu"
-                app.logger.info("Loading MegaDetector on %s...", device)
-                _wildlife_model = detection.MegaDetectorV5(device=device)
+
+                app.logger.info(
+                    "Loading MegaDetector on %s...", device
+                )
+
+                _wildlife_model = detection.MegaDetectorV5(
+                    device=device
+                )
+
                 app.logger.info("MegaDetector loaded successfully.")
 
     return _wildlife_model
@@ -71,7 +112,9 @@ def calculate_image_quality(image_bytes):
     image = decode_image(image_bytes)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    blur_score = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    blur_score = float(
+        cv2.Laplacian(gray, cv2.CV_64F).var()
+    )
     brightness_score = float(np.mean(gray))
     contrast_score = float(np.std(gray))
 
@@ -79,6 +122,7 @@ def calculate_image_quality(image_bytes):
         0.0,
         100.0 - abs(brightness_score - 128.0) * 1.35,
     )
+
     contrast_quality = min(100.0, contrast_score * 2.2)
     blur_quality = min(100.0, blur_score * 1.8)
 
@@ -88,8 +132,21 @@ def calculate_image_quality(image_bytes):
         + blur_quality * 0.45
     )
 
-    if reliability_score < 45:
-        decision = "FLAG"
+    quality_flags = []
+
+    if blur_score < 15:
+        quality_flags.append("Possible blur or poor sharpness")
+
+    if brightness_score < 20:
+        quality_flags.append("Image is too dark")
+    elif brightness_score > 235:
+        quality_flags.append("Image is too bright")
+
+    if contrast_score < 12:
+        quality_flags.append("Low contrast")
+
+    if reliability_score < 45 or quality_flags:
+        decision = "NEEDS REVIEW"
     elif reliability_score < 70:
         decision = "LOW PRIORITY"
     else:
@@ -101,6 +158,7 @@ def calculate_image_quality(image_bytes):
         "contrast_score": round(contrast_score, 2),
         "reliability_score": reliability_score,
         "decision": decision,
+        "quality_flags": quality_flags,
     }
 
 
@@ -171,7 +229,9 @@ def detect_wildlife(image_bytes):
                 "class_id": class_id,
                 "label": class_names.get(class_id, "unknown"),
                 "confidence": round(float(confidence), 4),
-                "box": [round(float(value), 2) for value in box],
+                "box": [
+                    round(float(value), 2) for value in box
+                ],
             })
 
     return {
@@ -184,7 +244,6 @@ def detect_wildlife(image_bytes):
         "image_width": int(image_bgr.shape[1]),
         "image_height": int(image_bgr.shape[0]),
     }
-
 
 # --------------------------------------------------
 # VALIDATION HELPERS
@@ -257,6 +316,159 @@ def parse_optional_voltage(value):
     return value
 
 
+def normalize_bool_flag(value, field_name, default=False):
+    """Accept real JSON booleans and common HTML form labels safely."""
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+
+    normalized = str(value).strip().lower()
+    if normalized in {"true", "1", "yes", "required", "enabled", "on"}:
+        return True
+    if normalized in {
+        "false", "0", "no", "optional", "not required",
+        "disabled", "off", "none", "unsupported", "not supported"
+    }:
+        return False
+
+    raise ValueError(f"{field_name} must be true or false.")
+
+
+def normalize_power_source(value):
+    value = str(value or "unknown").strip().lower()
+    aliases = {
+        "direct electricity": "electricity",
+        "grid electricity": "electricity",
+        "mains": "electricity",
+        "solar power": "solar",
+        "battery powered": "battery",
+    }
+    value = aliases.get(value, value)
+    if value not in ALLOWED_POWER_SOURCES:
+        raise ValueError("Invalid power source.")
+    return value
+
+
+def normalize_backup_battery(value):
+    value = str(value or "unknown").strip().lower()
+    aliases = {"true": "yes", "false": "no", "1": "yes", "0": "no"}
+    value = aliases.get(value, value)
+    if value not in ALLOWED_YES_NO_UNKNOWN:
+        raise ValueError("Invalid backup battery value.")
+    return value
+
+
+def normalize_battery_monitoring(value):
+    """Map the UI's labels to values accepted by the existing API/schema."""
+    value = str(value or "unknown").strip().lower()
+    aliases = {
+        "manual readings": "available",
+        "manual reading": "available",
+        "manual": "available",
+        "automatic readings": "yes",
+        "automatic": "yes",
+        "none": "no",
+        "not available": "unavailable",
+        "disabled": "no",
+    }
+    value = aliases.get(value, value)
+    if value not in {"yes", "no", "unknown", "available", "unavailable"}:
+        raise ValueError("Invalid battery monitoring value.")
+    return value
+
+
+def normalize_external_power(value):
+    """Accept UI labels and normalize them to bool/None."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    value = str(value).strip().lower()
+    if value in {"true", "yes", "available", "on", "connected"}:
+        return True
+    if value in {"false", "no", "unavailable", "off", "disconnected"}:
+        return False
+    if value in {"unknown", "none", "null"}:
+        return None
+    raise ValueError("External Power must be Available, Unavailable, or Unknown.")
+
+
+# --------------------------------------------------
+# MERGE MYSQL CAMERA DATA WITH EXTENDED CONFIGURATION
+# --------------------------------------------------
+
+def get_cameras_with_configuration():
+    """
+    Read camera records from MySQL and merge additional health
+    settings stored in instance/camera_health_config.json.
+    """
+    camera_rows = fetch_cameras()
+    configurations = read_health_configurations()
+
+    if not isinstance(camera_rows, list):
+        raise RuntimeError(
+            "fetch_cameras() must return a list of camera dictionaries."
+        )
+
+    result = []
+
+    for camera in camera_rows:
+        item = dict(camera)
+        camera_id = str(item.get("id", ""))
+
+        configuration = configurations.get(camera_id, {})
+
+        # Prefer saved extended configuration when present. Some versions of
+        # database.db.fetch_cameras() return only the core camera columns.
+        for field in (
+            "power_source", "backup_battery", "battery_monitoring",
+            "battery_percent", "battery_voltage",
+            "external_power_available", "telemetry_mode",
+            "telemetry_required", "lens_checks", "image_quality_checks",
+        ):
+            if field in configuration:
+                item[field] = configuration[field]
+
+        item.setdefault("power_source", "unknown")
+        item.setdefault("backup_battery", "unknown")
+        item.setdefault("battery_monitoring", "unknown")
+
+        item["telemetry_required"] = configuration.get(
+            "telemetry_required", item.get("telemetry_required", True)
+        )
+        item["telemetry_mode"] = configuration.get(
+            "telemetry_mode",
+            "automatic" if item.get("battery_monitoring") == "yes"
+            else "none"
+        )
+        item["lens_checks"] = configuration.get(
+            "lens_checks", True
+        )
+        item["image_quality_checks"] = configuration.get(
+            "image_quality_checks", True
+        )
+
+        # Keep the MySQL value when it exists. Otherwise use the
+        # saved extended configuration, if available.
+        if item.get("external_power_available") is None:
+            item["external_power_available"] = configuration.get(
+                "external_power_available"
+            )
+
+        item["configuration_confirmed_at"] = configuration.get(
+            "confirmed_at"
+        )
+
+        result.append(item)
+
+    return result
+
+
 # --------------------------------------------------
 # HOME
 # --------------------------------------------------
@@ -273,76 +485,105 @@ def home():
 @app.route("/api/cameras", methods=["GET"])
 def get_cameras():
     try:
-        return jsonify(fetch_cameras())
+        return jsonify(get_cameras_with_configuration())
 
-    except Error:
+    except (Error, RuntimeError):
         app.logger.exception("Unable to retrieve cameras")
         return jsonify({
             "error": "Unable to retrieve cameras."
         }), 503
 
-
 # --------------------------------------------------
-# ADD CAMERA WITH POWER CONFIGURATION
+# REGISTER CAMERA
 # --------------------------------------------------
 
 @app.route("/api/cameras", methods=["POST"])
 def add_camera():
     data = request.get_json(silent=True) or {}
 
-    camera_id = str(data.get("id", "")).strip().upper()
+    camera_id = str(data.get("id", "")).strip()
     zone = str(data.get("zone", "")).strip()
-    status = str(data.get("status", "Online")).strip()
+    status = str(data.get("status", "Unknown")).strip()
 
-    power_source = str(
-        data.get("power_source", "unknown")
-    ).strip().lower()
+    try:
+        power_source = normalize_power_source(data.get("power_source", "unknown"))
+        backup_battery = normalize_backup_battery(data.get("backup_battery", "unknown"))
+        battery_monitoring = normalize_battery_monitoring(
+            data.get("battery_monitoring", "unknown")
+        )
+        external_power_available = normalize_external_power(
+            data.get("external_power_available")
+        )
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
 
-    backup_battery = str(
-        data.get("backup_battery", "unknown")
-    ).strip().lower()
-
-    battery_monitoring = str(
-        data.get("battery_monitoring", "unknown")
+    telemetry_mode = str(
+        data.get("telemetry_mode", "automatic")
     ).strip().lower()
 
     try:
-        battery_percent = parse_optional_percent(data.get("battery_percent"))
-        battery_voltage = parse_optional_voltage(data.get("battery_voltage"))
+        telemetry_required = normalize_bool_flag(
+            data.get("telemetry_required", True),
+            "telemetry_required",
+            default=True,
+        )
+        lens_checks = normalize_bool_flag(
+            data.get("lens_checks", True),
+            "lens_checks",
+            default=True,
+        )
+        image_quality_checks = normalize_bool_flag(
+            data.get("image_quality_checks", True),
+            "image_quality_checks",
+            default=True,
+        )
     except ValueError as error:
         return jsonify({"error": str(error)}), 400
 
     if not camera_id or not zone:
         return jsonify({
-            "error": "Camera ID and zone are required."
+            "error": "Camera ID and Forest Zone are required."
         }), 400
 
-    if len(camera_id) > 20 or len(zone) > 100:
+    if len(camera_id) > 100 or len(zone) > 100:
         return jsonify({
-            "error": (
-                "Camera ID must be at most 20 characters "
-                "and zone at most 100 characters."
-            )
+            "error": "Camera ID and Forest Zone must be at most 100 characters."
         }), 400
 
-    if status not in ALLOWED_STATUSES:
+    if status not in ALLOWED_STATUSES | {"Unknown"}:
         return jsonify({"error": "Invalid camera status."}), 400
 
     if power_source not in ALLOWED_POWER_SOURCES:
-        return jsonify({"error": "Invalid power_source."}), 400
+        return jsonify({"error": "Invalid power source."}), 400
 
     if backup_battery not in ALLOWED_YES_NO_UNKNOWN:
+        return jsonify({"error": "Invalid backup battery value."}), 400
+
+    if telemetry_mode not in {
+        "automatic", "manual", "none", "yes", "no", "unknown"
+    }:
+        return jsonify({"error": "Invalid telemetry mode."}), 400
+
+    if not all(
+        isinstance(value, bool)
+        for value in (telemetry_required, lens_checks, image_quality_checks)
+    ) or (
+        external_power_available is not None
+        and not isinstance(external_power_available, bool)
+    ):
         return jsonify({
-            "error": "backup_battery must be yes, no, or unknown."
+            "error": "Health configuration flags must be true or false."
         }), 400
 
-    if battery_monitoring not in {"yes", "no", "unknown", "available", "unavailable"}:
-        return jsonify({
-            "error": (
-                "battery_monitoring must be yes, no, unknown, "
-                "available, or unavailable."
-            )
-        }), 400
+    try:
+        battery_percent = parse_optional_percent(
+            data.get("battery_percent")
+        )
+        battery_voltage = parse_optional_voltage(
+            data.get("battery_voltage")
+        )
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
 
     connection = None
     cursor = None
@@ -354,11 +595,17 @@ def add_camera():
         cursor.execute(
             """
             INSERT INTO cameras (
-                id, zone, status, power_source,
-                backup_battery, battery_monitoring,
-                battery_percent, battery_voltage
+                id,
+                zone,
+                status,
+                power_source,
+                backup_battery,
+                battery_monitoring,
+                battery_percent,
+                battery_voltage,
+                external_power_available
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 camera_id,
@@ -369,45 +616,28 @@ def add_camera():
                 battery_monitoring,
                 battery_percent,
                 battery_voltage,
+                None if external_power_available is None else int(external_power_available),
             ),
         )
 
         connection.commit()
-
-        return jsonify({
-            "message": "Camera added successfully.",
-            "camera": {
-                "id": camera_id,
-                "zone": zone,
-                "status": status,
-                "power_source": power_source,
-                "backup_battery": backup_battery,
-                "battery_monitoring": battery_monitoring,
-                "battery_percent": battery_percent,
-                "battery_voltage": battery_voltage,
-                "battery_health": (
-                    "Unknown" if battery_percent is None
-                    else "Critical" if battery_percent < 20
-                    else "Warning" if battery_percent < 60
-                    else "Good"
-                ),
-            },
-        }), 201
 
     except IntegrityError:
         if connection and connection.is_connected():
             connection.rollback()
 
         return jsonify({
-            "error": f"Camera ID {camera_id} already exists."
+            "error": f"Camera ID '{camera_id}' already exists."
         }), 409
 
     except Error:
         if connection and connection.is_connected():
             connection.rollback()
 
-        app.logger.exception("Unable to add camera")
-        return jsonify({"error": "Unable to save camera."}), 503
+        app.logger.exception("Unable to register camera")
+        return jsonify({
+            "error": "Unable to register camera in MySQL."
+        }), 503
 
     finally:
         if cursor:
@@ -416,6 +646,41 @@ def add_camera():
         if connection and connection.is_connected():
             connection.close()
 
+    # Save extended settings separately so the existing schema
+    # does not need to be changed.
+    configuration = {
+        "power_source": power_source,
+        "backup_battery": backup_battery,
+        "battery_monitoring": battery_monitoring,
+        "telemetry_mode": telemetry_mode,
+        "telemetry_required": telemetry_required,
+        "external_power_available": external_power_available,
+        "lens_checks": lens_checks,
+        "image_quality_checks": image_quality_checks,
+        "confirmed_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+    try:
+        save_health_configuration(camera_id, configuration)
+    except OSError:
+        app.logger.exception(
+            "Camera saved in MySQL, but extended configuration failed"
+        )
+
+        return jsonify({
+            "message": (
+                "Camera was added, but its extended health configuration "
+                "could not be saved. Check the Flask logs."
+            ),
+            "id": camera_id,
+            "configuration_saved": False,
+        }), 500
+
+    return jsonify({
+        "message": "Camera and health configuration saved successfully.",
+        "id": camera_id,
+        "configuration_saved": True,
+    }), 201
 
 # --------------------------------------------------
 # UPDATE CAMERA
@@ -426,135 +691,236 @@ def update_camera(camera_id):
     data = request.get_json(silent=True) or {}
 
     zone = str(data.get("zone", "")).strip()
-    status = str(data.get("status", "")).strip()
+    status = str(data.get("status", "Unknown")).strip()
 
     if not zone:
-        return jsonify({
-            "error": "Forest zone is required."
-        }), 400
+        return jsonify({"error": "Forest Zone is required."}), 400
 
     if len(zone) > 100:
         return jsonify({
-            "error": "Zone must be at most 100 characters."
+            "error": "Forest Zone must be at most 100 characters."
         }), 400
 
-    if status not in ALLOWED_STATUSES:
+    if status not in ALLOWED_STATUSES | {"Unknown"}:
         return jsonify({"error": "Invalid camera status."}), 400
 
-    connection = None
-    cursor = None
-
     try:
+        battery_percent = parse_optional_percent(
+            data.get("battery_percent")
+        )
+        battery_voltage = parse_optional_voltage(
+            data.get("battery_voltage")
+        )
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+    # Preserve existing values when optional fields are not submitted.
+    try:
+        existing_rows = get_cameras_with_configuration()
+        existing = next(
+            (
+                camera for camera in existing_rows
+                if str(camera.get("id")) == camera_id
+            ),
+            None,
+        )
+
+        if existing is None:
+            return jsonify({"error": "Camera not found."}), 404
+
+        try:
+            power_source = normalize_power_source(
+                data.get("power_source", existing.get("power_source") or "unknown")
+            )
+            backup_battery = normalize_backup_battery(
+                data.get("backup_battery", existing.get("backup_battery") or "unknown")
+            )
+            battery_monitoring = normalize_battery_monitoring(
+                data.get("battery_monitoring", existing.get("battery_monitoring") or "unknown")
+            )
+            external_power_available = normalize_external_power(
+                data.get("external_power_available", existing.get("external_power_available"))
+            )
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+
+        telemetry_mode = str(
+            data.get(
+                "telemetry_mode",
+                existing.get("telemetry_mode") or "automatic",
+            )
+        ).strip().lower()
+
+        if telemetry_mode not in {
+            "automatic", "manual", "none", "yes", "no", "unknown"
+        }:
+            return jsonify({"error": "Invalid telemetry mode."}), 400
+
+        telemetry_required = data.get(
+            "telemetry_required",
+            existing.get("telemetry_required", True),
+        )
+        lens_checks = data.get(
+            "lens_checks",
+            existing.get("lens_checks", True),
+        )
+        image_quality_checks = data.get(
+            "image_quality_checks",
+            existing.get("image_quality_checks", True),
+        )
+
+        if not all(
+            isinstance(value, bool)
+            for value in (
+                telemetry_required,
+                lens_checks,
+                image_quality_checks,
+            )
+        ):
+            return jsonify({
+                "error": "Health configuration flags must be true or false."
+            }), 400
+
         connection = get_connection()
         cursor = connection.cursor()
 
-        cursor.execute(
-            """
-            UPDATE cameras
-            SET zone = %s, status = %s
-            WHERE id = %s
-            """,
-            (zone, status, camera_id),
-        )
+        try:
+            cursor.execute(
+                """
+                UPDATE cameras
+                SET zone = %s,
+                    status = %s,
+                    power_source = %s,
+                    backup_battery = %s,
+                    battery_monitoring = %s,
+                    external_power_available = %s,
+                    battery_percent = %s,
+                    battery_voltage = %s
+                WHERE id = %s
+                """,
+                (
+                    zone,
+                    status,
+                    power_source,
+                    backup_battery,
+                    battery_monitoring,
+                    (
+                        None
+                        if external_power_available is None
+                        else int(external_power_available)
+                    ),
+                    battery_percent,
+                    battery_voltage,
+                    camera_id,
+                ),
+            )
 
-        connection.commit()
-
-        if cursor.rowcount == 0:
-            check_cursor = connection.cursor()
-
-            try:
-                check_cursor.execute(
+            if cursor.rowcount == 0:
+                # An unchanged record can have rowcount == 0.
+                cursor.execute(
                     "SELECT id FROM cameras WHERE id = %s",
                     (camera_id,),
                 )
-                exists = check_cursor.fetchone()
-            finally:
-                check_cursor.close()
 
-            if not exists:
-                return jsonify({
-                    "error": "Camera not found."
-                }), 404
+                if cursor.fetchone() is None:
+                    connection.rollback()
+                    return jsonify({"error": "Camera not found."}), 404
 
-        return jsonify({
-            "message": "Camera updated successfully."
-        })
+            connection.commit()
 
-    except Error:
-        if connection and connection.is_connected():
+        except Error:
             connection.rollback()
+            raise
 
-        app.logger.exception("Unable to update camera")
-        return jsonify({
-            "error": "Unable to update camera."
-        }), 503
-
-    finally:
-        if cursor:
+        finally:
             cursor.close()
-
-        if connection and connection.is_connected():
             connection.close()
 
+        configuration = {
+            "power_source": power_source,
+            "backup_battery": backup_battery,
+            "battery_monitoring": battery_monitoring,
+            "telemetry_mode": telemetry_mode,
+            "telemetry_required": telemetry_required,
+            "external_power_available": external_power_available,
+            "lens_checks": lens_checks,
+            "image_quality_checks": image_quality_checks,
+            "confirmed_at": datetime.now().isoformat(timespec="seconds"),
+        }
+
+        save_health_configuration(camera_id, configuration)
+
+        return jsonify({
+            "message": "Camera configuration updated successfully.",
+            "id": camera_id,
+            "configuration_saved": True,
+        })
+
+    except (Error, OSError, RuntimeError):
+        app.logger.exception("Unable to update camera %s", camera_id)
+
+        return jsonify({
+            "error": "Unable to update camera configuration."
+        }), 503
 
 # --------------------------------------------------
-# DELETE CAMERA
+# CAMERA HEALTH
 # --------------------------------------------------
 
-@app.route("/api/cameras/<camera_id>", methods=["DELETE"])
-def delete_camera(camera_id):
-    connection = None
-    cursor = None
-
+@app.route("/api/cameras/health", methods=["GET"])
+def camera_health():
     try:
-        connection = get_connection()
-        cursor = connection.cursor()
+        cameras = get_cameras_with_configuration()
+        now = datetime.now()
 
-        cursor.execute(
-            "DELETE FROM cameras WHERE id = %s",
-            (camera_id,),
-        )
+        for camera in cameras:
+            last_seen = camera.get("last_seen")
 
-        deleted = cursor.rowcount
-        connection.commit()
+            if isinstance(last_seen, str):
+                try:
+                    last_seen = datetime.fromisoformat(last_seen)
+                except ValueError:
+                    last_seen = None
 
-        if deleted == 0:
-            return jsonify({"error": "Camera not found."}), 404
+            if last_seen is None:
+                camera["health_status"] = "Unknown"
+                camera["minutes_since_seen"] = None
+                continue
 
+            if last_seen.tzinfo is not None:
+                current_time = datetime.now(last_seen.tzinfo)
+            else:
+                current_time = now
+
+            minutes = max(
+                0,
+                int((current_time - last_seen).total_seconds() / 60),
+            )
+
+            camera["minutes_since_seen"] = minutes
+
+            if minutes <= 5:
+                camera["health_status"] = "Online"
+            elif minutes <= 15:
+                camera["health_status"] = "Warning"
+            else:
+                camera["health_status"] = "Offline"
+
+        return jsonify(cameras)
+
+    except (Error, RuntimeError):
+        app.logger.exception("Unable to retrieve camera health")
         return jsonify({
-            "message": "Camera deleted successfully."
-        })
-
-    except Error:
-        if connection and connection.is_connected():
-            connection.rollback()
-
-        app.logger.exception("Unable to delete camera")
-        return jsonify({
-            "error": "Unable to delete camera."
+            "error": "Unable to retrieve camera health."
         }), 503
 
-    finally:
-        if cursor:
-            cursor.close()
-
-        if connection and connection.is_connected():
-            connection.close()
-
 
 # --------------------------------------------------
-# CAMERA HEARTBEAT AND BATTERY TELEMETRY
+# CAMERA HEARTBEAT
 # --------------------------------------------------
 
-@app.route(
-    "/api/cameras/<camera_id>/heartbeat",
-    methods=["POST"],
-)
+@app.route("/api/cameras/<camera_id>/heartbeat", methods=["POST"])
 def camera_heartbeat(camera_id):
-    """
-    A camera or device should POST here when it checks in.
-    This endpoint does not itself connect to physical camera hardware.
-    """
     data = request.get_json(silent=True) or {}
 
     try:
@@ -567,18 +933,6 @@ def camera_heartbeat(camera_id):
     except ValueError as error:
         return jsonify({"error": str(error)}), 400
 
-    external = data.get("external_power_available")
-
-    if external not in (None, True, False, 0, 1):
-        return jsonify({
-            "error": (
-                "external_power_available must be true, false, or null."
-            )
-        }), 400
-
-    if external is not None:
-        external = int(bool(external))
-
     connection = None
     cursor = None
 
@@ -587,72 +941,41 @@ def camera_heartbeat(camera_id):
         cursor = connection.cursor()
 
         cursor.execute(
-            "SELECT id FROM cameras WHERE id = %s",
-            (camera_id,),
-        )
-
-        if not cursor.fetchone():
-            return jsonify({"error": "Camera not found."}), 404
-
-        cursor.execute(
             """
             UPDATE cameras
-            SET last_seen = CURRENT_TIMESTAMP,
-                status = 'Online',
+            SET status = %s,
+                last_seen = NOW(),
+                last_telemetry_at = NOW(),
                 battery_percent = COALESCE(%s, battery_percent),
-                battery_voltage = COALESCE(%s, battery_voltage),
-                external_power_available =
-                    COALESCE(%s, external_power_available),
-                last_telemetry_at = CASE
-                    WHEN %s IS NOT NULL
-                      OR %s IS NOT NULL
-                      OR %s IS NOT NULL
-                    THEN CURRENT_TIMESTAMP
-                    ELSE last_telemetry_at
-                END
+                battery_voltage = COALESCE(%s, battery_voltage)
             WHERE id = %s
             """,
-            (
-                battery_percent,
-                battery_voltage,
-                external,
-                battery_percent,
-                battery_voltage,
-                external,
-                camera_id,
-            ),
+            ("Online", battery_percent, battery_voltage, camera_id),
         )
+
+        if cursor.rowcount == 0:
+            cursor.execute(
+                "SELECT id FROM cameras WHERE id = %s",
+                (camera_id,),
+            )
+
+            if cursor.fetchone() is None:
+                connection.rollback()
+                return jsonify({"error": "Camera not found."}), 404
 
         connection.commit()
 
-        if battery_percent is None:
-            battery_health = "Unknown"
-        elif battery_percent < 20:
-            battery_health = "Critical"
-        elif battery_percent < 60:
-            battery_health = "Warning"
-        else:
-            battery_health = "Good"
-
-        power_status = (
-            "Unavailable" if external == 0
-            else "Available" if external == 1
-            else "Unknown"
-        )
-
         return jsonify({
-            "message": "Camera heartbeat recorded.",
-            "camera_id": camera_id,
-            "status": "Online",
-            "battery_health": battery_health,
-            "external_power_status": power_status,
+            "message": "Camera heartbeat received.",
+            "id": camera_id,
         })
 
     except Error:
         if connection and connection.is_connected():
             connection.rollback()
 
-        app.logger.exception("Unable to record camera heartbeat")
+        app.logger.exception("Camera heartbeat failed")
+
         return jsonify({
             "error": "Unable to record camera heartbeat."
         }), 503
@@ -666,295 +989,159 @@ def camera_heartbeat(camera_id):
 
 
 # --------------------------------------------------
-# CAMERA HEALTH SUMMARY
-# --------------------------------------------------
-
-@app.route("/api/cameras/health", methods=["GET"])
-def camera_health_summary():
-    connection = None
-    cursor = None
-
-    try:
-        connection = get_connection()
-        cursor = connection.cursor(dictionary=True)
-
-        cursor.execute(
-            """
-            SELECT id, zone, status, last_seen, power_source,
-                   backup_battery, battery_monitoring,
-                   battery_percent, battery_voltage,
-                   external_power_available, last_telemetry_at
-            FROM cameras
-            ORDER BY id
-            """
-        )
-
-        rows = cursor.fetchall()
-        now = datetime.now()
-        result = []
-
-        for row in rows:
-            seen = row["last_seen"]
-
-            if seen:
-                if seen.tzinfo is not None:
-                    seen = seen.replace(tzinfo=None)
-
-                minutes_since_seen = max(
-                    0,
-                    int((now - seen).total_seconds() // 60),
-                )
-            else:
-                minutes_since_seen = None
-
-            if minutes_since_seen is None:
-                health_status = "Unknown"
-            elif minutes_since_seen <= 5:
-                health_status = "Online"
-            elif minutes_since_seen <= 15:
-                health_status = "Warning"
-            else:
-                health_status = "Offline"
-
-            percent = row["battery_percent"]
-
-            if percent is None:
-                battery_health = "Unknown"
-            elif float(percent) < 20:
-                battery_health = "Critical"
-            elif float(percent) < 60:
-                battery_health = "Warning"
-            else:
-                battery_health = "Good"
-
-            external = row["external_power_available"]
-
-            if external == 0:
-                power_status = "Unavailable"
-            elif external == 1:
-                power_status = "Available"
-            else:
-                power_status = "Unknown"
-
-            result.append({
-                "id": row["id"],
-                "zone": row["zone"],
-                "last_seen": (
-                    row["last_seen"].isoformat(sep=" ")
-                    if row["last_seen"] else None
-                ),
-                "minutes_since_seen": minutes_since_seen,
-                "health_status": health_status,
-                "power_source": row["power_source"],
-                "backup_battery": row["backup_battery"],
-                "battery_monitoring": row["battery_monitoring"],
-                "battery_percent": (
-                    float(percent) if percent is not None else None
-                ),
-                "battery_voltage": (
-                    float(row["battery_voltage"])
-                    if row["battery_voltage"] is not None else None
-                ),
-                "battery_health": battery_health,
-                "external_power_status": power_status,
-                "last_telemetry_at": (
-                    row["last_telemetry_at"].isoformat(sep=" ")
-                    if row["last_telemetry_at"] else None
-                ),
-            })
-
-        return jsonify(result)
-
-    except Error:
-        app.logger.exception("Unable to calculate camera health")
-        return jsonify({
-            "error": "Unable to calculate camera health."
-        }), 503
-
-    finally:
-        if cursor:
-            cursor.close()
-
-        if connection and connection.is_connected():
-            connection.close()
-
-
-# --------------------------------------------------
-# LIVE WILDLIFE DETECTION (NOT SAVED)
+# WILDLIFE DETECTION PREVIEW
 # --------------------------------------------------
 
 @app.route("/api/detect", methods=["POST"])
-def detect_live_frame():
-    uploaded_data, error_response = validate_uploaded_image()
+def detect_image():
+    validated, error_response = validate_uploaded_image()
 
     if error_response:
         return error_response
 
-    uploaded, image_bytes = uploaded_data
+    uploaded, image_bytes = validated
 
     try:
-        wildlife_results = detect_wildlife(image_bytes)
+        detection_result = detect_wildlife(image_bytes)
 
         return jsonify({
-            "message": "Wildlife detection completed.",
-            "image_name": os.path.basename(uploaded.filename),
-            "wildlife_detection": wildlife_results,
+            "filename": uploaded.filename,
+            "wildlife_detection": detection_result,
+            "detections": detection_result["detections"],
         })
-
-    except ValueError as error:
-        return jsonify({"error": str(error)}), 400
 
     except Exception:
         app.logger.exception("Wildlife detection failed")
+
         return jsonify({
-            "error": "Wildlife detection failed. Check the Flask terminal."
+            "error": "Wildlife detection failed. Check the Flask logs."
         }), 500
 
 
 # --------------------------------------------------
-# SAVE IMAGE, QUALITY, LENS ESTIMATE AND DETECTIONS
+# SAVE IMAGE ANALYSIS
 # --------------------------------------------------
 
 @app.route("/api/analyze", methods=["POST"])
 def analyze_image():
-    uploaded_data, error_response = validate_uploaded_image()
+    validated, error_response = validate_uploaded_image()
 
     if error_response:
         return error_response
 
-    uploaded, image_bytes = uploaded_data
+    uploaded, image_bytes = validated
+    camera_id = request.form.get("camera_id") or None
+
+    if camera_id:
+        try:
+            camera_ids = {
+                str(camera.get("id"))
+                for camera in fetch_cameras()
+            }
+
+            if camera_id not in camera_ids:
+                return jsonify({
+                    "error": "Selected camera was not found."
+                }), 404
+
+        except Error:
+            app.logger.exception("Unable to validate camera")
+            return jsonify({
+                "error": "Unable to validate selected camera."
+            }), 503
 
     try:
-        metrics = calculate_image_quality(image_bytes)
-        lens_status = estimate_lens_status(metrics)
-        wildlife_results = detect_wildlife(image_bytes)
+        quality = calculate_image_quality(image_bytes)
+        lens_status = estimate_lens_status(quality)
+        wildlife = detect_wildlife(image_bytes)
 
-    except ValueError as error:
-        return jsonify({"error": str(error)}), 400
-
-    except Exception:
-        app.logger.exception(
-            "Image quality analysis or wildlife detection failed"
-        )
-        return jsonify({
-            "error": "Image analysis failed. Check the Flask terminal."
-        }), 500
-
-    camera_id = request.form.get("camera_id", "").strip() or None
-    image_name = os.path.basename(uploaded.filename)[:255]
-
-    connection = None
-    cursor = None
-
-    try:
         connection = get_connection()
-
-        if camera_id:
-            check_cursor = connection.cursor()
-
-            try:
-                check_cursor.execute(
-                    "SELECT id FROM cameras WHERE id = %s",
-                    (camera_id,),
-                )
-
-                if not check_cursor.fetchone():
-                    return jsonify({
-                        "error": "Selected camera was not found."
-                    }), 404
-
-            finally:
-                check_cursor.close()
-
         cursor = connection.cursor()
 
-        cursor.execute(
-            """
-            INSERT INTO image_analyses (
-                camera_id, image_name, blur_score,
-                brightness_score, contrast_score,
-                reliability_score, decision, health_status,
-                image_data, detection_json, lens_status
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            (
-                camera_id,
-                image_name,
-                metrics["blur_score"],
-                metrics["brightness_score"],
-                metrics["contrast_score"],
-                metrics["reliability_score"],
-                metrics["decision"],
-                "Analyzed",
-                image_bytes,
-                json.dumps(wildlife_results),
-                lens_status,
-            ),
-        )
-
-        analysis_id = cursor.lastrowid
-
-        # An image upload counts as a check-in at that time only.
-        if camera_id:
+        try:
             cursor.execute(
                 """
-                UPDATE cameras
-                SET last_seen = CURRENT_TIMESTAMP
-                WHERE id = %s
+                INSERT INTO image_analyses (
+                    camera_id,
+                    image_name,
+                    lens_status,
+                    blur_score,
+                    brightness_score,
+                    contrast_score,
+                    reliability_score,
+                    decision,
+                    health_status,
+                    image_data,
+                    detection_json
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (camera_id,),
+                (
+                    camera_id,
+                    uploaded.filename,
+                    lens_status,
+                    quality["blur_score"],
+                    quality["brightness_score"],
+                    quality["contrast_score"],
+                    quality["reliability_score"],
+                    quality["decision"],
+                    (
+                        "Needs Review"
+                        if quality["decision"] == "NEEDS REVIEW"
+                        else "Healthy"
+                    ),
+                    image_bytes,
+                    json.dumps(wildlife),
+                ),
             )
 
-        connection.commit()
+            analysis_id = cursor.lastrowid
+            connection.commit()
 
-        metrics.update({
-            "analysis_id": analysis_id,
-            "image_name": image_name,
-            "camera_id": camera_id,
-            "health_status": "Analyzed",
-            "lens_status": lens_status,
-            "lens_status_note": (
-                "Image-based estimate only; cannot confirm "
-                "physical lens damage."
-            ),
-            "image_url": f"/api/images/{analysis_id}",
-        })
+        except Error:
+            connection.rollback()
+            raise
+
+        finally:
+            cursor.close()
+            connection.close()
 
         return jsonify({
-            "message": (
-                "Image, quality metrics, lens estimate, and "
-                "wildlife detections saved successfully to MySQL."
-            ),
-            "analysis": metrics,
-            "wildlife_detection": wildlife_results,
+            "message": "Image analysis saved successfully.",
+            "id": analysis_id,
+            "camera_id": camera_id,
+            "image_name": uploaded.filename,
+            "lens_status": lens_status,
+            **quality,
+            "wildlife_detection": wildlife,
         }), 201
 
-    except Error as error:
-        if connection and connection.is_connected():
-            connection.rollback()
-
-        app.logger.exception(
-            "Unable to save image and analysis: %s", error
-        )
+    except Exception:
+        app.logger.exception("Image analysis failed")
 
         return jsonify({
-            "error": (
-                "Analysis completed, but saving to MySQL failed. "
-                "Check the Flask terminal for the exact database error."
-            )
+            "error": "Image analysis failed. Check the Flask logs."
+        }), 500
+
+# --------------------------------------------------
+# ANALYSIS HISTORY
+# --------------------------------------------------
+
+@app.route("/api/analyses", methods=["GET"])
+def get_analyses():
+    try:
+        analyses = fetch_recent_analyses()
+        return jsonify(analyses)
+
+    except Error:
+        app.logger.exception("Unable to retrieve analysis history")
+        return jsonify({
+            "error": "Unable to retrieve analysis history."
         }), 503
-
-    finally:
-        if cursor:
-            cursor.close()
-
-        if connection and connection.is_connected():
-            connection.close()
 
 
 # --------------------------------------------------
-# OPEN A SAVED IMAGE
+# RETRIEVE SAVED IMAGE
 # --------------------------------------------------
 
 @app.route("/api/images/<int:analysis_id>", methods=["GET"])
@@ -977,40 +1164,34 @@ def get_saved_image(analysis_id):
 
         row = cursor.fetchone()
 
-        if not row or not row[0]:
-            return jsonify({
-                "error": (
-                    "No saved image exists for this analysis. "
-                    "Older records may not contain image data."
-                )
-            }), 404
+        if not row:
+            return jsonify({"error": "Image analysis not found."}), 404
 
-        image_data = bytes(row[0])
-        image_name = row[1] or "saved-image.jpg"
+        image_data, image_name = row
 
-        if image_name.lower().endswith(".png"):
-            mimetype = "image/png"
-        elif image_name.lower().endswith((".jpg", ".jpeg")):
-            mimetype = "image/jpeg"
-        else:
-            return jsonify({
-                "error": "Unsupported saved image type."
-            }), 415
+        if not image_data:
+            return jsonify({"error": "No image data is stored."}), 404
+
+        extension = Path(image_name or "").suffix.lower()
+
+        mime_type = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+        }.get(extension, "application/octet-stream")
 
         return Response(
             image_data,
-            mimetype=mimetype,
+            mimetype=mime_type,
             headers={
-                "Cache-Control": "no-store",
                 "Content-Disposition": "inline",
+                "X-Content-Type-Options": "nosniff",
             },
         )
 
     except Error:
         app.logger.exception("Unable to retrieve saved image")
-        return jsonify({
-            "error": "Unable to retrieve saved image."
-        }), 500
+        return jsonify({"error": "Unable to retrieve saved image."}), 503
 
     finally:
         if cursor:
@@ -1021,114 +1202,46 @@ def get_saved_image(analysis_id):
 
 
 # --------------------------------------------------
-# ANALYSIS HISTORY
+# APPLICATION HEALTH
 # --------------------------------------------------
 
-@app.route("/api/analyses", methods=["GET"])
-def get_analyses():
+@app.route("/health", methods=["GET"])
+def application_health():
+    return jsonify({
+        "status": "WildSense is running",
+        "database": "configured",
+        "wildlife_detection": "MegaDetector",
+    })
+
+
+# --------------------------------------------------
+# DATABASE STATUS
+# --------------------------------------------------
+
+@app.route("/api/database/status", methods=["GET"])
+def database_status():
     try:
-        return jsonify(fetch_recent_analyses())
+        check_database()
 
-    except Error:
-        app.logger.exception("Unable to retrieve analyses")
         return jsonify({
-            "error": "Unable to retrieve analyses."
-        }), 503
-
-
-# --------------------------------------------------
-# VIEW SAVED WILDLIFE DETECTION DATA
-# --------------------------------------------------
-
-@app.route(
-    "/api/analyses/<int:analysis_id>/detection",
-    methods=["GET"],
-)
-def get_saved_detection(analysis_id):
-    connection = None
-    cursor = None
-
-    try:
-        connection = get_connection()
-        cursor = connection.cursor()
-
-        cursor.execute(
-            """
-            SELECT detection_json
-            FROM image_analyses
-            WHERE id = %s
-            """,
-            (analysis_id,),
-        )
-
-        row = cursor.fetchone()
-
-        if not row:
-            return jsonify({"error": "Analysis not found."}), 404
-
-        detection_json = row[0]
-
-        if not detection_json:
-            return jsonify({
-                "error": "No saved detection data for this analysis."
-            }), 404
-
-        if isinstance(detection_json, (bytes, bytearray)):
-            detection_json = detection_json.decode("utf-8")
-
-        if isinstance(detection_json, str):
-            detection_json = json.loads(detection_json)
-
-        return jsonify(detection_json)
-
-    except (Error, ValueError, TypeError):
-        app.logger.exception("Unable to retrieve detection data")
-        return jsonify({
-            "error": "Unable to retrieve saved detection data."
-        }), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-
-        if connection and connection.is_connected():
-            connection.close()
-
-
-# --------------------------------------------------
-# DATABASE HEALTH CHECK
-# --------------------------------------------------
-
-@app.route("/health")
-def health():
-    try:
-        return jsonify({
-            "status": "healthy",
-            "database": check_database(),
+            "status": "connected",
         })
 
-    except Error:
+    except Exception:
         app.logger.exception("Database health check failed")
+
         return jsonify({
-            "status": "degraded",
-            "database": "unavailable",
+            "status": "unavailable",
         }), 503
 
 
 # --------------------------------------------------
-# FILE SIZE ERROR
-# --------------------------------------------------
-
-@app.errorhandler(413)
-def file_too_large(_error):
-    return jsonify({
-        "error": "Image must be smaller than 10 MB."
-    }), 413
-
-
-# --------------------------------------------------
-# RUN APPLICATION
+# START APPLICATION
 # --------------------------------------------------
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(
+        host="127.0.0.1",
+        port=5000,
+        debug=True,
+    )
