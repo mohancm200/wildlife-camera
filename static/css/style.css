@@ -1205,9 +1205,7 @@ footer { font-size: 12.5px; }
 
 /* page header bar */
 .ws-paged .main-content > .panel.ws-on > .section-heading {
-    position: sticky;
-    top: 14px;
-    z-index: 6;
+    position: relative;
     margin: 0 0 24px;
     padding: 26px 32px;
     border: 1px solid rgba(255, 255, 255, .12);
@@ -1267,7 +1265,20 @@ footer { font-size: 12.5px; }
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
 }
-.ws-paged #connected-camera-devices > .camera-form { margin: 0; }
+.ws-paged .camera-form {
+    background: rgba(8, 26, 18, .74);
+    border: 1px solid rgba(255, 255, 255, .14);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+}
+.ws-paged #connected-camera-devices > .camera-form { margin: 0; padding: 32px; }
+.ws-paged .form-grid label { color: #f0f8ef; font-size: 13px; }
+.ws-paged .camera-form input::placeholder { color: #a9c4ae; }
+.ws-paged .camera-form input, .ws-paged .camera-form select { background-color: rgba(255, 255, 255, .09); }
+.ws-paged .camera-form button:disabled { opacity: .5; }
+.ws-paged #connected-camera-devices .camera-form > div[style*="max-width"] { max-width: 100% !important; }
+.ws-paged #connected-camera-video { min-height: min(52vh, 520px); object-fit: contain; }
+.ws-paged #connected-camera-message { color: #e4f1e5; }
 .ws-paged .main-content > .metrics.ws-on { margin-top: 0; }
 .ws-paged .main-content > footer.ws-on { margin-top: 40px; }
 
@@ -1296,8 +1307,7 @@ footer { font-size: 12.5px; }
         gap: 16px;
         margin: 0;
         align-self: start;
-        position: sticky;
-        top: 150px;
+        position: static;
     }
     .ws-paged #camera-health > .camera-filters { grid-area: filters; }
     .ws-paged #camera-health > #camera-health-message { grid-area: msg; }
@@ -1331,6 +1341,238 @@ footer { font-size: 12.5px; }
 @media (max-width: 760px) {
     .ws-paged .main-content > .panel.ws-on > .section-heading { position: static; padding: 20px; border-radius: 20px; }
     .ws-paged .main-content > .panel.ws-on { min-height: 0; }
+}
+
+/* ==========================================================
+   CAMERA DETAILS AS CLEAN ROWS  (label on the left, value on the right)
+   ========================================================== */
+.camera-card .ws-kv {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 14px;
+    margin: 0;
+    padding: 9px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, .09);
+    font-size: 13px;
+}
+.camera-card .ws-k { flex: 0 0 auto; color: var(--muted); }
+.camera-card .ws-v { min-width: 0; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+.camera-card .ws-v.ws-dim { font-weight: 500; font-style: italic; opacity: .55; }
+
+/* style switch button */
+.ws-ctrl { position: fixed; right: 22px; bottom: 22px; z-index: 40; display: flex; gap: 10px; }
+.ws-theme-btn {
+    position: relative;
+    padding: 11px 18px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, .3);
+    background: rgba(8, 26, 18, .8);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    color: #f0f8ef;
+    font-family: var(--ws-font-head);
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: .02em;
+    cursor: pointer;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, .4);
+    transition: transform .25s var(--ws-ease), background .25s;
+}
+.ws-theme-btn:hover { transform: translateY(-3px); background: rgba(20, 70, 46, .9); }
+
+/* ==========================================================
+   STYLE 1 - LIGHT FROST  (white cards, dark text)
+   ========================================================== */
+html[data-ws-theme="light"] :is(.main-content .metric, .main-content .report-card, .main-content .camera-card, .ws-paged .panel.ws-on > .section-heading, .ws-paged .panel.ws-on > .camera-filters, .ws-paged .panel.ws-on > .network-summary, .ws-paged #analysis-list, .ws-paged #preview-area, .main-content .camera-form, .ws-paged .panel.ws-on > .upload-box) {
+    --muted: #4b6656; --accent: #14803f; --text: #0f2a1a;
+    color: #0f2a1a;
+    text-shadow: none;
+    background: rgba(255, 255, 255, .86);
+    border: 1px solid rgba(255, 255, 255, .85);
+    box-shadow: 0 18px 50px rgba(8, 30, 18, .28), inset 0 1px 0 #fff;
+    backdrop-filter: blur(18px) saturate(1.3);
+    -webkit-backdrop-filter: blur(18px) saturate(1.3);
+}
+html[data-ws-theme="light"] .main-content .camera-card { border-left: 4px solid rgba(20, 128, 63, .7); }
+html[data-ws-theme="light"] .main-content .camera-card:has(.camera-status.online) { border-left-color: #1f9d55; }
+html[data-ws-theme="light"] .main-content .camera-card:has(.camera-status.warning) { border-left-color: #e0a100; }
+html[data-ws-theme="light"] .main-content .camera-card:has(.camera-status.offline) { border-left-color: #d64545; }
+html[data-ws-theme="light"] .main-content .metric { border-top: 3px solid var(--c); }
+
+html[data-ws-theme="light"] :is(.main-content .metric, .main-content .report-card, .main-content .camera-card, .ws-paged .panel.ws-on > .section-heading, .ws-paged .panel.ws-on > .camera-filters, .ws-paged .panel.ws-on > .network-summary, .ws-paged #analysis-list, .ws-paged #preview-area, .main-content .camera-form, .ws-paged .panel.ws-on > .upload-box) :is(h1, h2, h3, strong, .camera-zone) { color: #0f2a1a; }
+html[data-ws-theme="light"] .main-content .metric h2 { background: none; color: #0f2a1a; -webkit-text-fill-color: #0f2a1a; filter: none; }
+html[data-ws-theme="light"] :is(.main-content .metric, .main-content .report-card, .main-content .camera-card, .ws-paged .panel.ws-on > .section-heading, .ws-paged .panel.ws-on > .camera-filters, .ws-paged .panel.ws-on > .network-summary, .ws-paged #analysis-list, .ws-paged #preview-area, .main-content .camera-form, .ws-paged .panel.ws-on > .upload-box) .muted,
+html[data-ws-theme="light"] .main-content .metric > span { color: #4b6656; }
+html[data-ws-theme="light"] :is(.main-content .metric, .main-content .report-card, .main-content .camera-card, .ws-paged .panel.ws-on > .section-heading, .ws-paged .panel.ws-on > .camera-filters, .ws-paged .panel.ws-on > .network-summary, .ws-paged #analysis-list, .ws-paged #preview-area, .main-content .camera-form, .ws-paged .panel.ws-on > .upload-box) .eyebrow { color: #14803f; background: rgba(20, 128, 63, .1); border-color: rgba(20, 128, 63, .3); }
+html[data-ws-theme="light"] :is(.main-content .metric, .main-content .report-card, .main-content .camera-card, .ws-paged .panel.ws-on > .section-heading, .ws-paged .panel.ws-on > .camera-filters, .ws-paged .panel.ws-on > .network-summary, .ws-paged #analysis-list, .ws-paged #preview-area, .main-content .camera-form, .ws-paged .panel.ws-on > .upload-box) label { color: #2d4a3a; }
+html[data-ws-theme="light"] :is(.main-content .metric, .main-content .report-card, .main-content .camera-card, .ws-paged .panel.ws-on > .section-heading, .ws-paged .panel.ws-on > .camera-filters, .ws-paged .panel.ws-on > .network-summary, .ws-paged #analysis-list, .ws-paged #preview-area, .main-content .camera-form, .ws-paged .panel.ws-on > .upload-box) .detection-results { color: #f2fff4; }
+html[data-ws-theme="light"] :is(.main-content .metric, .main-content .report-card, .main-content .camera-card, .ws-paged .panel.ws-on > .section-heading, .ws-paged .panel.ws-on > .camera-filters, .ws-paged .panel.ws-on > .network-summary, .ws-paged #analysis-list, .ws-paged #preview-area, .main-content .camera-form, .ws-paged .panel.ws-on > .upload-box) .detection-results :is(h3, strong) { color: #f2fff4; }
+
+/* metric colours that read well on white */
+html[data-ws-theme="light"] .metrics > .metric:nth-child(1) { --c: #2f8f5b; --cbg: rgba(47, 143, 91, .14); --cbd: rgba(47, 143, 91, .35); }
+html[data-ws-theme="light"] .metrics > .metric:nth-child(2) { --c: #1f9d55; --cbg: rgba(31, 157, 85, .14); --cbd: rgba(31, 157, 85, .35); }
+html[data-ws-theme="light"] .metrics > .metric:nth-child(3) { --c: #c98a00; --cbg: rgba(201, 138, 0, .14); --cbd: rgba(201, 138, 0, .38); }
+html[data-ws-theme="light"] .metrics > .metric:nth-child(4) { --c: #d64545; --cbg: rgba(214, 69, 69, .12); --cbd: rgba(214, 69, 69, .36); }
+html[data-ws-theme="light"] .metrics > .metric:nth-child(5) { --c: #1f8fd1; --cbg: rgba(31, 143, 209, .12); --cbd: rgba(31, 143, 209, .36); }
+html[data-ws-theme="light"] .panel .metrics > .metric:nth-child(1) { --c: #1f9d55; --cbg: rgba(31, 157, 85, .14); --cbd: rgba(31, 157, 85, .35); }
+html[data-ws-theme="light"] .panel .metrics > .metric:nth-child(2) { --c: #c98a00; --cbg: rgba(201, 138, 0, .14); --cbd: rgba(201, 138, 0, .38); }
+html[data-ws-theme="light"] .panel .metrics > .metric:nth-child(3) { --c: #d64545; --cbg: rgba(214, 69, 69, .12); --cbd: rgba(214, 69, 69, .36); }
+html[data-ws-theme="light"] .panel .metrics > .metric:nth-child(4) { --c: #6b7d72; --cbg: rgba(107, 125, 114, .14); --cbd: rgba(107, 125, 114, .36); }
+
+/* buttons, fields */
+html[data-ws-theme="light"] :is(.main-content .metric, .main-content .report-card, .main-content .camera-card, .ws-paged .panel.ws-on > .section-heading, .ws-paged .panel.ws-on > .camera-filters, .ws-paged .panel.ws-on > .network-summary, .ws-paged #analysis-list, .ws-paged #preview-area, .main-content .camera-form, .ws-paged .panel.ws-on > .upload-box) .secondary-btn { color: #0f2a1a; background: rgba(15, 42, 26, .06); border: 1px solid rgba(15, 42, 26, .22); backdrop-filter: none; }
+html[data-ws-theme="light"] :is(.main-content .metric, .main-content .report-card, .main-content .camera-card, .ws-paged .panel.ws-on > .section-heading, .ws-paged .panel.ws-on > .camera-filters, .ws-paged .panel.ws-on > .network-summary, .ws-paged #analysis-list, .ws-paged #preview-area, .main-content .camera-form, .ws-paged .panel.ws-on > .upload-box) .secondary-btn:hover { background: rgba(20, 128, 63, .14); border-color: #14803f; }
+html[data-ws-theme="light"] :is(.main-content .metric, .main-content .report-card, .main-content .camera-card, .ws-paged .panel.ws-on > .section-heading, .ws-paged .panel.ws-on > .camera-filters, .ws-paged .panel.ws-on > .network-summary, .ws-paged #analysis-list, .ws-paged #preview-area, .main-content .camera-form, .ws-paged .panel.ws-on > .upload-box) .delete-btn { color: #b32a2a; background: #ffe9e9; border: 1px solid #f2b5b5; }
+html[data-ws-theme="light"] :is(.main-content .metric, .main-content .report-card, .main-content .camera-card, .ws-paged .panel.ws-on > .section-heading, .ws-paged .panel.ws-on > .camera-filters, .ws-paged .panel.ws-on > .network-summary, .ws-paged #analysis-list, .ws-paged #preview-area, .main-content .camera-form, .ws-paged .panel.ws-on > .upload-box) .delete-btn:hover { background: #ffd6d6; }
+html[data-ws-theme="light"] :is(.main-content .metric, .main-content .report-card, .main-content .camera-card, .ws-paged .panel.ws-on > .section-heading, .ws-paged .panel.ws-on > .camera-filters, .ws-paged .panel.ws-on > .network-summary, .ws-paged #analysis-list, .ws-paged #preview-area, .main-content .camera-form, .ws-paged .panel.ws-on > .upload-box) :is(input, select, textarea) { background-color: #fff; color: #0f2a1a; border: 1px solid rgba(15, 42, 26, .2); }
+html[data-ws-theme="light"] :is(.main-content .metric, .main-content .report-card, .main-content .camera-card, .ws-paged .panel.ws-on > .section-heading, .ws-paged .panel.ws-on > .camera-filters, .ws-paged .panel.ws-on > .network-summary, .ws-paged #analysis-list, .ws-paged #preview-area, .main-content .camera-form, .ws-paged .panel.ws-on > .upload-box) input::placeholder { color: #6b8374; }
+html[data-ws-theme="light"] :is(.main-content .metric, .main-content .report-card, .main-content .camera-card, .ws-paged .panel.ws-on > .section-heading, .ws-paged .panel.ws-on > .camera-filters, .ws-paged .panel.ws-on > .network-summary, .ws-paged #analysis-list, .ws-paged #preview-area, .main-content .camera-form, .ws-paged .panel.ws-on > .upload-box) :is(input, select, textarea):focus { border-color: #14803f; box-shadow: 0 0 0 3px rgba(20, 128, 63, .18); }
+html[data-ws-theme="light"] select option { background: #fff; color: #0f2a1a; }
+html[data-ws-theme="light"] .camera-filters input[type="search"] { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2314803f' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E"); }
+html[data-ws-theme="light"] :is(.camera-filters, .camera-form) select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2314803f' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); }
+
+/* status pills, rows, tables, upload */
+html[data-ws-theme="light"] .camera-status.online { color: #14703a; background: #dcf5e4; border-color: #a9e0bb; }
+html[data-ws-theme="light"] .camera-status.warning { color: #8a5a00; background: #fff1cf; border-color: #f0d58f; }
+html[data-ws-theme="light"] .camera-status.offline { color: #a42828; background: #ffe2e2; border-color: #f2b5b5; }
+html[data-ws-theme="light"] .camera-card .ws-kv { border-bottom-color: rgba(15, 42, 26, .1); }
+html[data-ws-theme="light"] .camera-card .ws-k { color: #4b6656; }
+html[data-ws-theme="light"] .camera-card .camera-last-seen { color: #4b6656; }
+html[data-ws-theme="light"] .ws-paged #analysis-list .analysis-table th { background: rgba(15, 42, 26, .06); color: #14643a; border-bottom-color: rgba(15, 42, 26, .12); }
+html[data-ws-theme="light"] .ws-paged #analysis-list .analysis-table td { color: #1c3b2b; border-bottom-color: rgba(15, 42, 26, .1); }
+html[data-ws-theme="light"] .ws-paged #analysis-list .analysis-table tbody tr:hover { background: rgba(20, 128, 63, .07); }
+html[data-ws-theme="light"] .ws-paged .panel.ws-on > .upload-box { border: 2px dashed rgba(20, 128, 63, .5); }
+html[data-ws-theme="light"] .upload-icon { color: #14803f; }
+html[data-ws-theme="light"] .ws-paged #connected-camera-message { color: #2d4a3a; }
+html[data-ws-theme="light"] .ws-paged .panel.ws-on > :is(#camera-results-count, #camera-health-message),
+html[data-ws-theme="light"] .ws-paged :is(#camera-list, #camera-health-list) { text-shadow: 0 1px 8px rgba(0, 0, 0, .75); }
+
+/* ==========================================================
+   STYLE 2 - SOLID  (flat emerald cards, crisp borders)
+   ========================================================== */
+html[data-ws-theme="solid"] :is(.main-content .metric, .main-content .report-card, .main-content .camera-card, .ws-paged .panel.ws-on > .section-heading, .ws-paged .panel.ws-on > .camera-filters, .ws-paged .panel.ws-on > .network-summary, .ws-paged #analysis-list, .ws-paged #preview-area, .main-content .camera-form, .ws-paged .panel.ws-on > .upload-box) {
+    text-shadow: none;
+    background: #0f2b20;
+    border: 1px solid #2a6b4c;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, .4);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+html[data-ws-theme="solid"] .main-content .camera-card { border-left: 4px solid #3fae7a; }
+html[data-ws-theme="solid"] .main-content .camera-card:has(.camera-status.online) { border-left-color: #7ced9b; }
+html[data-ws-theme="solid"] .main-content .camera-card:has(.camera-status.warning) { border-left-color: #ffd27a; }
+html[data-ws-theme="solid"] .main-content .camera-card:has(.camera-status.offline) { border-left-color: #ff8d8d; }
+html[data-ws-theme="solid"] .main-content .metric { border-top: 3px solid var(--c); }
+html[data-ws-theme="solid"] .ws-paged .panel.ws-on > .section-heading { background: linear-gradient(120deg, #14573b, #0d3a29); border-color: #2f8a63; }
+html[data-ws-theme="solid"] :is(.main-content .metric, .main-content .report-card, .main-content .camera-card, .ws-paged .panel.ws-on > .section-heading, .ws-paged .panel.ws-on > .camera-filters, .ws-paged .panel.ws-on > .network-summary, .ws-paged #analysis-list, .ws-paged #preview-area, .main-content .camera-form, .ws-paged .panel.ws-on > .upload-box) :is(input, select, textarea) { background-color: #0a2018; border-color: #2a6b4c; }
+html[data-ws-theme="solid"] :is(.main-content .metric, .main-content .report-card, .main-content .camera-card, .ws-paged .panel.ws-on > .section-heading, .ws-paged .panel.ws-on > .camera-filters, .ws-paged .panel.ws-on > .network-summary, .ws-paged #analysis-list, .ws-paged #preview-area, .main-content .camera-form, .ws-paged .panel.ws-on > .upload-box) .secondary-btn { background: #173f30; border-color: #2f8a63; backdrop-filter: none; }
+html[data-ws-theme="solid"] :is(.main-content .metric, .main-content .report-card, .main-content .camera-card, .ws-paged .panel.ws-on > .section-heading, .ws-paged .panel.ws-on > .camera-filters, .ws-paged .panel.ws-on > .network-summary, .ws-paged #analysis-list, .ws-paged #preview-area, .main-content .camera-form, .ws-paged .panel.ws-on > .upload-box) .secondary-btn:hover { background: #1f5240; }
+
+/* status messages that sit on the picture become small readable pills */
+.ws-paged .panel.ws-on > :is(#camera-results-count, #camera-health-message) {
+    justify-self: start;
+    align-self: start;
+    display: inline-block;
+    width: fit-content;
+    padding: 7px 16px;
+    border-radius: 999px;
+    background: rgba(8, 26, 18, .72);
+    color: #e4f1e5;
+    text-shadow: none;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+html[data-ws-theme="light"] .ws-paged .panel.ws-on > :is(#camera-results-count, #camera-health-message) {
+    background: rgba(255, 255, 255, .9);
+    color: #2d4a3a;
+    text-shadow: none;
+}
+
+/* ==========================================================
+   LAYOUT: ROWS  (pill bars, round icon badges, wide camera rows)
+   Switch back with the "Layout" button.
+   ========================================================== */
+html[data-ws-layout="rows"] .ws-paged .main-content > .panel.ws-on > .section-heading { border-radius: 56px; padding: 26px 48px; }
+html[data-ws-layout="rows"] .ws-paged .panel.ws-on > .camera-filters,
+html[data-ws-layout="rows"] .ws-paged .panel.ws-on > .network-summary { border-radius: 999px; padding: 14px 24px; }
+html[data-ws-layout="rows"] .camera-filters :is(input, select) { border-radius: 999px; }
+html[data-ws-layout="rows"] .camera-filters input[type="search"] { padding-left: 54px; background-position: 22px 50%; }
+html[data-ws-layout="rows"] .camera-filters select { padding-left: 22px; }
+
+/* status boxes: pill with a round icon badge */
+html[data-ws-layout="rows"] .main-content .metric {
+    display: grid;
+    grid-template-columns: 62px minmax(0, 1fr);
+    grid-template-areas: "ic lab" "ic num" "ic note";
+    column-gap: 18px;
+    row-gap: 0;
+    align-items: center;
+    padding: 16px 30px 16px 20px;
+    border-radius: 999px;
+    border-top-width: 1px;
+}
+html[data-ws-layout="rows"] .main-content .metric::after {
+    position: static;
+    grid-area: ic;
+    width: 62px;
+    height: 62px;
+    border-radius: 50%;
+    font-size: 26px;
+}
+html[data-ws-layout="rows"] .main-content .metric > span { grid-area: lab; }
+html[data-ws-layout="rows"] .main-content .metric > h2 { grid-area: num; margin: 0; font-size: clamp(30px, 2.6vw, 44px); }
+html[data-ws-layout="rows"] .main-content .metric > p { grid-area: note; }
+html[data-ws-layout="rows"] .main-content > .metrics { grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); }
+
+/* camera records: one wide row each */
+html[data-ws-layout="rows"] .ws-paged :is(#camera-list, #camera-health-list) { grid-template-columns: 1fr; gap: 14px; }
+html[data-ws-layout="rows"] .main-content .camera-card {
+    display: grid;
+    grid-template-columns: 240px repeat(4, minmax(0, 1fr));
+    column-gap: 26px;
+    row-gap: 2px;
+    align-items: center;
+    padding: 18px 30px;
+    border-radius: 28px;
+}
+html[data-ws-layout="rows"] .camera-card .camera-card-top {
+    grid-column: 1;
+    grid-row: 1 / span 3;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+}
+html[data-ws-layout="rows"] .camera-card .ws-kv { flex-direction: column; align-items: flex-start; gap: 2px; padding: 6px 0; border-bottom: 0; }
+html[data-ws-layout="rows"] .camera-card .ws-k { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+html[data-ws-layout="rows"] .camera-card .ws-v { text-align: left; }
+html[data-ws-layout="rows"] .camera-card :is(.camera-zone, .camera-last-seen) { margin: 0; }
+html[data-ws-layout="rows"] .camera-card .camera-actions { grid-column: -2 / -1; margin: 0; justify-content: flex-end; }
+
+/* dashboard arrangement on wide screens: status strip on top, full-width rows below */
+@media (min-width: 1101px) {
+    html[data-ws-layout="rows"] .ws-paged #camera-health.ws-on {
+        grid-template-columns: 1fr;
+        grid-template-areas: "head" "kpi" "filters" "msg" "list";
+        grid-template-rows: auto auto auto auto 1fr;
+    }
+    html[data-ws-layout="rows"] .ws-paged #camera-health > .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); position: static; top: auto; }
+    html[data-ws-layout="rows"] .ws-paged #cameras.ws-on { grid-template-columns: 1fr; }
+    html[data-ws-layout="rows"] .ws-paged #cameras > :is(.network-summary, .camera-filters, #camera-results-count, #camera-list, #camera-filter-empty, #add-camera-form) {
+        grid-column: 1;
+        grid-row: auto;
+    }
+    html[data-ws-layout="rows"] .ws-paged #cameras > .camera-filters { grid-template-columns: minmax(0, 1fr) 240px; }
+}
+
+@media (max-width: 1100px) {
+    html[data-ws-layout="rows"] .main-content .camera-card { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    html[data-ws-layout="rows"] .camera-card .camera-card-top { grid-column: 1 / -1; grid-row: auto; flex-direction: row; justify-content: space-between; align-items: center; }
+    html[data-ws-layout="rows"] .camera-card .camera-actions { grid-column: 1 / -1; justify-content: flex-start; }
+}
+@media (max-width: 760px) {
+    html[data-ws-layout="rows"] .ws-paged .main-content > .panel.ws-on > .section-heading { border-radius: 28px; padding: 22px; }
+    html[data-ws-layout="rows"] .main-content .metric { border-radius: 28px; }
 }
 
 /* ---------- Responsive layouts ---------- */
