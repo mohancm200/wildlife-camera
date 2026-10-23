@@ -1068,6 +1068,7 @@
     if (!first && id !== current) window.scrollTo({ top: 0, behavior: 'auto' });
     current = id;
     window.dispatchEvent(new Event('ws-page'));
+    playEnter(id);
   }
   function fromHash() {
     var h = decodeURIComponent(location.hash.slice(1));
@@ -1079,5 +1080,166 @@
 
   document.body.classList.add('ws-paged');
   show(fromHash(), true);
-  window.addEventListener('hashchange', function () { show(fromHash()); });
+
+  /* ---- entrance: boxes snap into focus one after another ---- */
+  var ENTER_SEL = '.metric, .camera-card, .report-card, .upload-box, #preview-area, #analysis-list, .camera-form, .camera-filters, .network-summary, .hero-content > *';
+  var enterTimer = 0;
+  function playEnter(id) {
+    var roots = PAGE[id] || [], k = 0;
+    roots.forEach(function (el) {
+      el.classList.remove('ws-enter');
+      void el.offsetWidth;
+      [].forEach.call(el.querySelectorAll(ENTER_SEL), function (n) { n.style.setProperty('--ws-i', Math.min(k++, 14)); });
+      el.classList.add('ws-enter');
+    });
+    clearTimeout(enterTimer);
+    enterTimer = setTimeout(function () { roots.forEach(function (el) { el.classList.remove('ws-enter'); }); }, 2400);
+  }
+
+  /* ---- camera-shutter transition ---- */
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var TEXT = {
+    'overview': ['WILDSENSE', 'Scanning the forest\u2026'],
+    'cameras': ['CAMERA NETWORK', 'Locating field cameras\u2026'],
+    'camera-health': ['CAMERA HEALTH', 'Reading device telemetry\u2026'],
+    'connected-camera-devices': ['CONNECTED DEVICES', 'Detecting local cameras\u2026'],
+    'analysis': ['IMAGE ANALYSIS', 'Loading the detection model\u2026'],
+    'history': ['ANALYSIS HISTORY', 'Opening the wildlife archive\u2026'],
+    'reports': ['REPORTS', 'Compiling reliability data\u2026']
+  };
+  var iris = document.createElement('div');
+  iris.className = 'ws-iris';
+  iris.setAttribute('aria-hidden', 'true');
+  iris.innerHTML = '<i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i>' +
+    '<div class="ws-iris-hud"><div class="ws-iris-rec"><i></i>REC</div><div class="ws-iris-title"></div>' +
+    '<div class="ws-iris-sub"></div><div class="ws-iris-bar"><b></b></div></div><span class="ws-iris-flash"></span>';
+  document.body.appendChild(iris);
+  var hudTitle = iris.querySelector('.ws-iris-title'), hudSub = iris.querySelector('.ws-iris-sub');
+
+  function setActive(id) {
+    [].forEach.call(nav.querySelectorAll('a[href^="#"]'), function (a) {
+      a.classList.toggle('active', a.getAttribute('href') === '#' + id);
+    });
+  }
+  var busy = false, pending = null;
+  function navigate(id) {
+    if (!PAGE[id]) id = 'overview';
+    if (id === current) return;
+    if (reduce) { show(id); return; }
+    if (busy) { pending = id; return; }
+    busy = true;
+    var t = TEXT[id];
+    if (!t) {
+      var a = nav.querySelector('a[href="#' + id + '"]');
+      t = [a ? a.textContent.trim().toUpperCase() : id.toUpperCase(), 'Loading\u2026'];
+    }
+    hudTitle.textContent = t[0];
+    hudSub.textContent = t[1];
+    setActive(id);
+    iris.className = 'ws-iris closing';
+    setTimeout(function () {
+      show(id);                                  // swap the page while the iris is closed
+      setTimeout(function () {
+        iris.className = 'ws-iris opening';
+        setTimeout(function () {
+          iris.className = 'ws-iris';
+          busy = false;
+          var n = pending; pending = null;
+          if (n && n !== current) navigate(n);
+        }, 480);
+      }, 220);
+    }, 300);
+  }
+  window.addEventListener('hashchange', function () { navigate(fromHash()); });
+})();
+
+/* ==========================================================
+   Style switch (Light / Dark glass / Solid) and clean detail rows
+   for camera cards. Visual only.
+   ========================================================== */
+(function () {
+  'use strict';
+  if (window.__wsTheme) return;
+  window.__wsTheme = true;
+
+  var THEMES = [['light', 'Light'], ['dark', 'Dark glass'], ['solid', 'Solid']];
+  var KEY = 'wsTheme', cur = 'light';
+  try { cur = localStorage.getItem(KEY) || 'light'; } catch (e) {}
+  if (!THEMES.some(function (t) { return t[0] === cur; })) cur = 'light';
+
+  var btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'ws-theme-btn';
+  btn.title = 'Change the dashboard style';
+  var ctrl = document.querySelector('.ws-ctrl');
+  if (!ctrl) { ctrl = document.createElement('div'); ctrl.className = 'ws-ctrl'; document.body.appendChild(ctrl); }
+  ctrl.appendChild(btn);
+
+  // layout: wide rows or tall cards
+  var LAYOUTS = [['rows', 'Rows'], ['cards', 'Cards']], LKEY = 'wsLayout', lcur = 'rows';
+  try { lcur = localStorage.getItem(LKEY) || 'rows'; } catch (e) {}
+  if (!LAYOUTS.some(function (l) { return l[0] === lcur; })) lcur = 'rows';
+  var lbtn = document.createElement('button');
+  lbtn.type = 'button';
+  lbtn.className = 'ws-theme-btn';
+  lbtn.title = 'Change the dashboard layout';
+  ctrl.insertBefore(lbtn, btn);
+  function applyLayout() {
+    document.documentElement.setAttribute('data-ws-layout', lcur);
+    var label = LAYOUTS.filter(function (l) { return l[0] === lcur; })[0][1];
+    lbtn.textContent = '\u25A6 Layout: ' + label;
+  }
+  lbtn.addEventListener('click', function () {
+    var i = 0;
+    LAYOUTS.forEach(function (l, k) { if (l[0] === lcur) i = k; });
+    lcur = LAYOUTS[(i + 1) % LAYOUTS.length][0];
+    try { localStorage.setItem(LKEY, lcur); } catch (e) {}
+    applyLayout();
+  });
+  applyLayout();
+
+  function apply() {
+    document.documentElement.setAttribute('data-ws-theme', cur);
+    var label = THEMES.filter(function (t) { return t[0] === cur; })[0][1];
+    btn.textContent = '\uD83C\uDFA8 Style: ' + label;
+  }
+  btn.addEventListener('click', function () {
+    var i = 0;
+    THEMES.forEach(function (t, k) { if (t[0] === cur) i = k; });
+    cur = THEMES[(i + 1) % THEMES.length][0];
+    try { localStorage.setItem(KEY, cur); } catch (e) {}
+    apply();
+  });
+  apply();
+
+  // "Power source: unknown"  ->  label on the left, value on the right
+  var DIM = /^(unknown|no reading|not received|not known|n\/a|-|\u2014)$/i;
+  function rows(root) {
+    [].forEach.call(root.querySelectorAll('.camera-card p, .camera-card li, .camera-card div'), function (el) {
+      if (el.getAttribute('data-ws-kv') || el.children.length) return;
+      var m = /^([^:]{2,40}):\s*(.+)$/.exec(el.textContent.trim());
+      if (!m) return;
+      el.setAttribute('data-ws-kv', '1');
+      el.classList.add('ws-kv');
+      var k = document.createElement('span'), v = document.createElement('span');
+      k.className = 'ws-k'; k.textContent = m[1];
+      v.className = 'ws-v'; v.textContent = m[2];
+      if (DIM.test(m[2].trim())) v.classList.add('ws-dim');
+      el.textContent = '';
+      el.appendChild(k); el.appendChild(v);
+    });
+  }
+  var queued = false;
+  function schedule() {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(function () { queued = false; rows(document); });
+  }
+  if ('MutationObserver' in window) {
+    ['camera-list', 'camera-health-list'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) new MutationObserver(schedule).observe(el, { childList: true, subtree: true });
+    });
+  }
+  rows(document);
 })();
